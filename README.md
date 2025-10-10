@@ -5,4 +5,6 @@ PKI (Public Key Infrastructure) je sistem za upravljanje digitalnim sertifikatim
 omogućava sigurnu autentifikaciju korisnika i uređaja, kao i zaštitu komunikacije. Podržava
 izdavanje, pregled i povlačenje sertifikata, upravljanje korisnicima, šablonima i automatsko
 obnavljanje sertifikata. Drugi deo sistema je deljeni menadžer lozinki sa enkripcijom. Sistem
-koristi HTTPS, višefaktorsku autentifikaciju i audit logove radi visokog nivoa bezbednosti
+koristi HTTPS, višefaktorsku autentifikaciju i audit logove radi visokog nivoa bezbednosti.
+
+Link do frontend aplikacije: https://github.com/MilosNesh/public-key-infrastructure-fe
