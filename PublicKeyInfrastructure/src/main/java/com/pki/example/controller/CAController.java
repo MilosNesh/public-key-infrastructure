@@ -20,13 +20,6 @@ public class CAController {
     private final CAService caService;
     private final CertificateService certificateService;
 
-    @GetMapping
-    public ResponseEntity<List<CertificateResponse>> getAllCertificates() {
-        // Koristi stari servis (za kompatibilnost)
-        List<CertificateResponse> certificates = caService.getAll();
-        return ResponseEntity.ok(certificates);
-    }
-
     @PostMapping("/root")
     public ResponseEntity<CertificateResponse> createRootCA(@RequestBody CARequest request) throws Exception {
         // Koristi NOVI servis (čuva lozinke u bazi)
@@ -35,10 +28,13 @@ public class CAController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/intermediate")
-    public ResponseEntity<CertificateResponse> createIntermediateCA(@RequestBody IntermediateCARequest request) throws Exception {
+    @PostMapping("/intermediate/{issuerUserId}")
+    public ResponseEntity<CertificateResponse> createIntermediateCA(
+            @PathVariable Long issuerUserId,
+            @RequestBody IntermediateCARequest request) throws Exception {
+
         // Koristi NOVI servis (čuva lozinke u bazi)
-        CertificateResponse response = certificateService.createIntermediateCA(request);
+        CertificateResponse response = certificateService.createIntermediateCA(request, issuerUserId);
         return ResponseEntity.ok(response);
     }
 }

@@ -20,11 +20,7 @@ public interface CertificateService {
      * @param request IntermediateCARequest sa svim podacima
      * @return CertificateResponse sa informacijama o kreiranom sertifikatu
      */
-    CertificateResponse createIntermediateCA(IntermediateCARequest request) throws Exception;
+    CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception;
 
-    /**
-     * Vraća sve sertifikate iz keystore-a
-     */
-    List<CertificateResponse> getAll();
 }
 
