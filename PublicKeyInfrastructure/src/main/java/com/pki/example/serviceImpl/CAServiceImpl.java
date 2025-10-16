@@ -9,7 +9,6 @@ import com.pki.example.validation.CertificateValidator;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.io.FileInputStream;
@@ -207,8 +206,8 @@ public class CAServiceImpl implements CAService {
             return out;
 
         } catch (Exception e) {
-            // po želji: baci tvoju domenku umesto da vraćaš prazno
             throw new RuntimeException("Ne mogu da pročitam keystore ili sertifikate: " + e.getMessage(), e);
         }
     }
 }
+

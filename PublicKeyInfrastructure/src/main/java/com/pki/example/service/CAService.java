@@ -15,3 +15,4 @@ public interface CAService {
 
     List<CertificateResponse> getAll();
 }
+
