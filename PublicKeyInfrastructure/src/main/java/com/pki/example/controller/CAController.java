@@ -6,6 +6,7 @@ import com.pki.example.data.IntermediateCARequest;
 import com.pki.example.service.CAService;
 import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,4 +38,5 @@ public class CAController {
         CertificateResponse response = certificateService.createIntermediateCA(request, issuerUserId);
         return ResponseEntity.ok(response);
     }
+
 }
