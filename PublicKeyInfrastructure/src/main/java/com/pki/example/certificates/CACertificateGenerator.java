@@ -89,11 +89,6 @@ public class CACertificateGenerator {
             String serialNumber,
             Integer pathLength) {
 
-        if (!validator.canIssue(issuerCert, startDate, endDate)) {
-            throw new IllegalArgumentException(
-                    "Issuer CA nije validan ili novi sertifikat ima nevalidan period važenja!");
-        }
-
         try {
             JcaContentSignerBuilder builder = new JcaContentSignerBuilder("SHA256WithRSAEncryption");
             builder = builder.setProvider("BC");

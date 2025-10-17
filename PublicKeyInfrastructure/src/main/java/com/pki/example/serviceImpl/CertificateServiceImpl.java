@@ -15,6 +15,8 @@ import com.pki.example.util.SerialNumberUtil;
 import com.pki.example.validation.CertificateValidator;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -174,13 +176,27 @@ public class CertificateServiceImpl implements CertificateService {
             throw new Exception("Sertifikat sa aliasom '" + aliasToFind + "' nije pronađen ni u jednom keystore-u korisnika!");
         }
 
-        // 3. Validacija issuer CA-a
-        if (!validator.isCAValid(issuerCert)) {
+        KeyStore ks = KeyStore.getInstance("JKS");
+        try (FileInputStream fis = new FileInputStream(matchingCertificate.getKeystorePath())) {
+            ks.load(fis, matchingCertificate.getKeystorePassword().toCharArray());
+        }
+        java.security.cert.Certificate[] issuerChain = ks.getCertificateChain(request.getIssuerAlias());
+
+        X509Certificate parentOrNull = null;
+        if (issuerChain != null && issuerChain.length >= 2) {
+            parentOrNull = (X509Certificate) issuerChain[1]; // roditelj iznad issuer-a
+        } else {
+            // ako je issuer root (self-signed), parent može ostati null
+            parentOrNull = null;
+        }
+
+        // PROVERA VALIDNOSTI: (umesto stare varijante)
+        if (!validator.isCAValid(issuerCert, parentOrNull)) {
             throw new Exception("Issuer certificate not valid!");
         }
 
-        // 4. Validacija perioda važenja
-        if (!validator.canIssue(issuerCert, request.getStartDate(), request.getEndDate())) {
+        // PROVERA PERIODA:
+        if (!validator.canIssue(issuerCert, request.getStartDate(), request.getEndDate(), parentOrNull)) {
             throw new Exception("Period važenja sertifikata nije validan");
         }
 

@@ -123,7 +123,7 @@ public class CAServiceImpl implements CAService {
         }
 
         // 4. Validacija perioda važenja
-        if (!validator.canIssue(issuerCert, request.getStartDate(), request.getEndDate())) {
+        if (!validator.canIssue(issuerCert, request.getStartDate(), request.getEndDate(), null)) {
             throw  new Exception("Period vazenja sertifikata nije validan");
         }
 
