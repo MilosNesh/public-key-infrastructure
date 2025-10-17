@@ -41,7 +41,7 @@ public class User implements UserDetails {
             inverseJoinColumns = @JoinColumn(name = "role_id", referencedColumnName = "id"))
     private List<Role> roles;
 
-    @Column(name = "activationToken")
+    @Column(name = "activation_token", nullable = true)
     private String activationToken;
 
     public User() {}
