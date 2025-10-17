@@ -212,6 +212,7 @@ public class CertificateServiceImpl implements CertificateService {
         builder.addRDN(BCStyle.E, request.getEmail());
 
         Subject subject = new Subject(keyPair.getPublic(), builder.build());
+        BigInteger serial32 = SerialNumberUtil.generateSerial(32);
 
         // 7. Generisanje Intermediate CA sertifikata
         X509Certificate intermediateCA = caCertificateGenerator.generateIntermediateCACertificate(
@@ -220,7 +221,7 @@ public class CertificateServiceImpl implements CertificateService {
                 issuerCert,
                 request.getStartDate(),
                 request.getEndDate(),
-                request.getSerialNumber(),
+                serial32.toString(),
                 request.getPathLength()
         );
 
@@ -268,7 +269,7 @@ public class CertificateServiceImpl implements CertificateService {
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         UserCertificate userCertificate = new UserCertificate(
                 user,
-                Long.parseLong(request.getSerialNumber()),
+                Long.parseLong(serial32.toString()),
                 keyStorePassword,
                 keystorePathToUse
         );
