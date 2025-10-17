@@ -130,7 +130,6 @@ public class CertificateServiceImpl implements CertificateService {
 
     @Override
     public CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception {
-        
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
 
@@ -227,8 +226,10 @@ public class CertificateServiceImpl implements CertificateService {
             keyStorePassword = PasswordGenerator.generatePassword(20);
 
             String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
-            keystorePathToUse = "src/main/resources/static/" + alias + "-keystore.jks";
+            keystorePathToUse = "src/main/resources/static/" + alias + ".jks";
             keyStoreWriter.loadKeyStore(null, keyStorePassword.toCharArray());
+
+            keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
         } else {
             // Nastavi u isti keystore
             keyStoreWriter.loadKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
@@ -236,14 +237,14 @@ public class CertificateServiceImpl implements CertificateService {
 
         String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
         List<X509Certificate> chainList = buildCertificateChain(
-                keystorePathToUse,
-                keyStorePassword,
+                matchingCertificate.getKeystorePath(),
+                matchingCertificate.getKeystorePassword(),
                 request.getIssuerAlias()
         );
         chainList.add(0, intermediateCA);
         X509Certificate[] chain = chainList.toArray(new X509Certificate[0]);
 
-        keyStoreWriter.writeChain(alias, keyPair.getPrivate(), privateKeyPassword.toCharArray(), chain);
+        keyStoreWriter.writeChain(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), chain);
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
         // 10. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
@@ -284,6 +285,7 @@ public class CertificateServiceImpl implements CertificateService {
             throw new Exception("Sertifikat sa aliasom " + alias + " nije pronađen u keystore-u " + keystorePath);
         }
 
+        System.out.println("Sertifikat u lancu: " + cert.getIssuerDN());
         chain.add(cert);
 
         // Ako issuer != subject → pokušaj da nađeš roditelja u istom keystore-u
