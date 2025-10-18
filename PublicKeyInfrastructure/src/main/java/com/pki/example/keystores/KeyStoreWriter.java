@@ -68,4 +68,12 @@ public class KeyStoreWriter {
             e.printStackTrace();
         }
     }
+
+    public void writeChain(String alias, PrivateKey privateKey, char[] password, java.security.cert.Certificate[] chain) {
+        try {
+            keyStore.setKeyEntry(alias, privateKey, password, chain);
+        } catch (KeyStoreException e) {
+            throw new RuntimeException("Greška pri upisu sertifikata u keystore: " + e.getMessage(), e);
+        }
+    }
 }

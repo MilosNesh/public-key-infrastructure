@@ -40,9 +40,9 @@ public class ExampleApplication {
 		System.out.println("Cuvanje certifikata u jks fajl:");
 		keyStoreWriter.loadKeyStore("src/main/resources/static/example.jks",  "password".toCharArray());
 		PrivateKey pk = certificate.getIssuer().getPrivateKey();
-		keyStoreWriter.write("cert1", pk, "password".toCharArray(), certificate.getX509Certificate());
-		keyStoreWriter.saveKeyStore("src/main/resources/static/example.jks",  "password".toCharArray());
-		System.out.println("Cuvanje certifikata u jks fajl zavrseno.");
+//		keyStoreWriter.write("cert1", pk, "password".toCharArray(), certificate.getX509Certificate());
+//		keyStoreWriter.saveKeyStore("src/main/resources/static/example.jks",  "password".toCharArray());
+//		System.out.println("Cuvanje certifikata u jks fajl zavrseno.");
 
 		System.out.println("Ucitavanje sertifikata iz jks fajla:");
 		Certificate loadedCertificate = keyStoreReader.readCertificate("src/main/resources/static/example.jks", "password", "cert1");
