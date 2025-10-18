@@ -6,6 +6,7 @@ import com.pki.example.data.IntermediateCARequest;
 import com.pki.example.service.CAService;
 import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,7 +15,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/ca")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "https://localhost:4200")
 public class CAController {
 
     private final CAService caService;
@@ -37,4 +37,5 @@ public class CAController {
         CertificateResponse response = certificateService.createIntermediateCA(request, issuerUserId);
         return ResponseEntity.ok(response);
     }
+
 }

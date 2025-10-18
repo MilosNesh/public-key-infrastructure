@@ -1,0 +1,11 @@
+package com.pki.example.service;
+
+import com.pki.example.data.CARequest;
+import com.pki.example.data.CertificateResponse;
+
+public interface CSRService {
+    public CertificateResponse approveCSR(Long csrId, Long issuerUserId, String issuerAlias) throws Exception;
+
+    Long saveCSR(org.springframework.web.multipart.MultipartFile file, Long userId) throws Exception;
+
+}
