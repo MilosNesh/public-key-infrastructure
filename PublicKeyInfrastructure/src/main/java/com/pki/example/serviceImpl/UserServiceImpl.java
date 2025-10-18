@@ -3,6 +3,7 @@ package com.pki.example.serviceImpl;
 import com.pki.example.data.Role;
 import com.pki.example.data.User;
 import com.pki.example.dto.LoginDetailsDTO;
+import com.pki.example.dto.RecoveryDataDTO;
 import com.pki.example.repository.UserRepository;
 import com.pki.example.security.PasswordHasher;
 import com.pki.example.service.MailService;
@@ -74,5 +75,19 @@ public class UserServiceImpl implements UserService {
         if(PasswordHasher.verifyPassword(loginDetailsDTO.getPassword(), user.getPassword()))
             return true;
         return false;
+    }
+
+    public boolean resetPassword(RecoveryDataDTO recoveryDataDTO, String token){
+        try {
+            User user = userRepository.findByEmail(recoveryDataDTO.getEmail());
+            if(tokenUtils.validateToken(token, user)){
+                user.setPassword(PasswordHasher.hashPassword(recoveryDataDTO.getPassword()));
+                userRepository.save(user);
+                return true;
+            }
+            return false;
+        }catch (Exception e) {
+            return false;
+        }
     }
 }

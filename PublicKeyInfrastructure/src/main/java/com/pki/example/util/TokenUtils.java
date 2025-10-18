@@ -35,6 +35,15 @@ public class TokenUtils {
                 .signWith(SIGNATURE_ALGORITHM, SECRET).compact();
     }
 
+    public String generateActivationAndResetToken(User user, int expiresIn) {
+        return Jwts.builder()
+                .setIssuer(APP_NAME)
+                .setSubject(user.getEmail())
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(new Date().getTime() + expiresIn))
+                .signWith(SIGNATURE_ALGORITHM, SECRET).compact();
+    }
+
     public String getToken(HttpServletRequest request) {
         String authHeader = request.getHeader(AUTH_HEADER);
 

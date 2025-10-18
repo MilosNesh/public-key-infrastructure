@@ -32,6 +32,8 @@ public class SecurityConfig {
                 .antMatchers("/auth/register").permitAll()
                 .antMatchers("/auth/activate").permitAll()
                 .antMatchers("/auth/login").permitAll()
+                .antMatchers("/auth/recover").permitAll()
+                .antMatchers("/auth/recoverylink").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .httpBasic();

@@ -2,8 +2,10 @@ package com.pki.example.controller;
 
 import com.pki.example.data.User;
 import com.pki.example.dto.LoginDetailsDTO;
+import com.pki.example.dto.RecoveryDataDTO;
 import com.pki.example.dto.UserDTO;
 import com.pki.example.security.Captcha;
+import com.pki.example.service.MailService;
 import com.pki.example.service.UserService;
 import com.pki.example.util.TokenUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 @RestController
@@ -27,6 +30,8 @@ public class AuthController {
     private TokenUtils tokenUtils;
     @Autowired
     private Captcha captcha;
+    @Autowired
+    private MailService mailService;
 
     @PostMapping("/register")
     public ResponseEntity<UserDTO> registration(@RequestBody UserDTO userDTO) {
@@ -39,7 +44,7 @@ public class AuthController {
         if (user == null) {
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
-        String token = tokenUtils.generateToken(user);
+        String token = tokenUtils.generateActivationAndResetToken(user, 1000*60*5);
         userService.setActivationToken(user, token);
         userDTO.setPassword("");
         return new ResponseEntity<>(userDTO, HttpStatus.CREATED);
@@ -104,6 +109,29 @@ public class AuthController {
         // Vrati token kao odgovor na uspesnu autentifikaciju
         return ResponseEntity.ok(jwt);
     }
+
+    @PostMapping("/recoverylink")
+    public ResponseEntity<String> sendRecoveryLink(@RequestBody String email) {
+        User userByEmail = userService.getByEmail(email);
+        if (userByEmail == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        }
+        try {
+            mailService.sendRecoverNotificationAsync(userByEmail);
+        }catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(e.getMessage());
+        }
+        return ResponseEntity.ok("");
+    }
+
+    @PostMapping("/recover")
+    public ResponseEntity<String> recover(@RequestBody RecoveryDataDTO recoveryDataDTO, HttpServletRequest request) {
+        boolean isReset = userService.resetPassword(recoveryDataDTO, tokenUtils.getToken(request));
+        if(!isReset)
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        return ResponseEntity.ok("");
+    }
+
 
 
 }
