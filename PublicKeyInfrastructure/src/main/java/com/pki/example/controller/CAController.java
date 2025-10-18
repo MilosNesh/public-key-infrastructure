@@ -15,7 +15,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/ca")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "https://localhost:4200")
 public class CAController {
 
     private final CAService caService;

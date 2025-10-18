@@ -17,9 +17,13 @@ import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
+import org.bouncycastle.operator.ContentVerifierProvider;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -31,10 +35,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
+import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Date;
@@ -132,8 +138,7 @@ public class CSRServiceImpl implements CSRService {
         Path outDir = Paths.get("src/main/resources/end-entity");
         Files.createDirectories(outDir);
 
-        // preporučeno: .cer ili .der ekstenzija
-        Path certPath = outDir.resolve(safeFile + "_ee.cer");
+        Path certPath = outDir.resolve(safeFile + "_ee.der");
         writeCertificateDer(certificate, certPath);
 
         // 4. Ažuriraj bazu
@@ -183,4 +188,75 @@ public class CSRServiceImpl implements CSRService {
         // Inače tretiraj kao DER
         return new PKCS10CertificationRequest(raw);
     }
+
+
+    @Override
+    public Long saveCSR(MultipartFile file, Long userId) throws Exception {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Prazan fajl.");
+        }
+        // 1) Učitaj bajtove sa upload-a
+        byte[] raw = file.getBytes();
+
+        // 2) Parsiraj CSR (radi i za PEM i za DER)
+        PKCS10CertificationRequest csr = loadCSR(raw);
+
+        // 3) Proveri potpis CSR-a (da nije korumpiran / nevalidan)
+        if (!isCsrSignatureValid(csr)) {
+            throw new IllegalArgumentException("CSR potpis nije validan.");
+        }
+
+        // 4) Odredi naziv fajla (koristi CN ako postoji, inače originalno ime)
+        String cn = extractCN(csr.getSubject());
+        String baseName = (cn != null && !cn.isBlank())
+                ? cn
+                : (file.getOriginalFilename() != null ? file.getOriginalFilename() : "request");
+        String safe = sanitize(baseName);
+
+        // 5) Folder i ekstenzija (čuvamo originalni sadržaj; ekstenzija .csr je uobičajena)
+        Path dir = Paths.get("src/main/resources/csr");
+        Files.createDirectories(dir);
+        String ext = guessCsrExtension(file, raw); // .pem ili .csr
+
+        String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        Path out = dir.resolve(safe + "_" + ts + ext);
+
+        // 6) Upis na disk
+        Files.write(out, raw, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+        // 7) Zapiši u bazu
+        CsrRequest entity = new CsrRequest();
+        entity.setUserId(userId);
+        entity.setCsrPath(out.toString());
+        entity.setStatus("pending"); // dogovoreno stanje
+        // opciono: sačuvaj subject CN/email radi lakšeg pregleda
+        // entity.setSubjectCn(cn);
+
+        CsrRequest saved = csrRepository.save(entity);
+        return saved.getId();
+    }
+
+    /** Provera potpisa CSR-a javnim ključem iz samog CSR-a. */
+    private boolean isCsrSignatureValid(PKCS10CertificationRequest csr) throws Exception {
+        PublicKey pubKey = new JcaPEMKeyConverter().getPublicKey(csr.getSubjectPublicKeyInfo());
+        ContentVerifierProvider verifier = new JcaContentVerifierProviderBuilder()
+                .setProvider("BC")
+                .build(pubKey);
+        return csr.isSignatureValid(verifier);
+    }
+
+    private String guessCsrExtension(MultipartFile file, byte[] raw) {
+        String name = file.getOriginalFilename();
+        if (name != null && name.toLowerCase().endsWith(".pem")) return ".pem";
+        if (name != null && name.toLowerCase().endsWith(".csr")) return ".csr";
+        String s = new String(raw, StandardCharsets.UTF_8).trim();
+        if (s.startsWith("-----BEGIN")) return ".pem";
+        return ".csr";
+    }
+
+    /** Sanitizacija naziva fajla. */
+    private String sanitize(String input) {
+        return input.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
 }

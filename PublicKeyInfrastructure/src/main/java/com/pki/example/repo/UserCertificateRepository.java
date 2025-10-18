@@ -22,3 +22,4 @@ public interface UserCertificateRepository extends JpaRepository<UserCertificate
     boolean existsByCertificateId(Long certificateId);
 }
 
+
