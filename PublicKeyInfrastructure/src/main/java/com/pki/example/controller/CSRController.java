@@ -20,7 +20,7 @@ public class CSRController {
     @PostMapping
     public ResponseEntity<?> uploadCSR(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("userId") Long userId) throws Exception {
+            @RequestParam("userId") Integer userId) throws Exception {
         Long savedId = csrService.saveCSR(file, userId);
         CsrUploadResponse body = new CsrUploadResponse(
                 "OK",
@@ -34,7 +34,7 @@ public class CSRController {
     @PostMapping("/{csrId}/approve")
     public ResponseEntity<CertificateResponse> approveCSR(
             @PathVariable Long csrId,
-            @RequestParam("issuerUserId") Long issuerUserId,
+            @RequestParam("issuerUserId") Integer issuerUserId,
             @RequestParam("issuerAlias") String issuerAlias)  throws Exception {
         CertificateResponse response = csrService.approveCSR(csrId, issuerUserId, issuerAlias);
         return ResponseEntity.ok(response);

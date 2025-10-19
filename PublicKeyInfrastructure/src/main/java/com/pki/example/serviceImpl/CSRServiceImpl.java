@@ -9,7 +9,6 @@ import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
 import com.pki.example.repo.CsrRepository;
 import com.pki.example.repo.UserCertificateRepository;
-import com.pki.example.repo.UserRepository;
 import com.pki.example.service.CSRService;
 import com.pki.example.util.SerialNumberUtil;
 import org.bouncycastle.asn1.ASN1String;
@@ -68,7 +67,7 @@ public class CSRServiceImpl implements CSRService {
 
 
     @Override
-    public CertificateResponse approveCSR(Long csrId, Long issuerUserId, String issuerAlias) throws Exception{
+    public CertificateResponse approveCSR(Long csrId, Integer issuerUserId, String issuerAlias) throws Exception{
         System.out.println("CSR id: " + csrId);
         CsrRequest request = csrRepository.findById(csrId)
                 .orElseThrow(() -> new IllegalArgumentException("CSR not found"));
@@ -191,7 +190,7 @@ public class CSRServiceImpl implements CSRService {
 
 
     @Override
-    public Long saveCSR(MultipartFile file, Long userId) throws Exception {
+    public Long saveCSR(MultipartFile file, Integer userId) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Prazan fajl.");
         }

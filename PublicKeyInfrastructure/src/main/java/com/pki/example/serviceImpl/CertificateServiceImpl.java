@@ -2,12 +2,11 @@ package com.pki.example.serviceImpl;
 
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.*;
-import com.pki.example.domain.User;
 import com.pki.example.domain.UserCertificate;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
 import com.pki.example.repo.UserCertificateRepository;
-import com.pki.example.repo.UserRepository;
+import com.pki.example.repository.UserRepository;
 import com.pki.example.service.CertificateService;
 import com.pki.example.util.CertificateUtils;
 import com.pki.example.util.PasswordGenerator;
@@ -15,8 +14,6 @@ import com.pki.example.util.SerialNumberUtil;
 import com.pki.example.validation.CertificateValidator;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
-import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class CertificateServiceImpl implements CertificateService {
@@ -94,7 +90,7 @@ public class CertificateServiceImpl implements CertificateService {
 
 
         // 8. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(1)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         
         UserCertificate userCertificate = new UserCertificate(
@@ -131,7 +127,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception {
+    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Integer issuerUserId) throws Exception {
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
 
@@ -265,7 +261,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
         // 10. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(1)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         UserCertificate userCertificate = new UserCertificate(
                 user,

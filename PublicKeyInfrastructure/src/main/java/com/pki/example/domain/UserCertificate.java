@@ -1,5 +1,6 @@
 package com.pki.example.domain;
 
+import com.pki.example.data.User;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;

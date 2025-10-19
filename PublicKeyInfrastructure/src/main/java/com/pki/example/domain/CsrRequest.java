@@ -10,7 +10,7 @@ public class CsrRequest {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long userId;
+    private Integer userId;
     private Long certificateId;
 
     private String csrPath;
@@ -21,15 +21,15 @@ public class CsrRequest {
 
     public CsrRequest() {}
 
-    public CsrRequest(Long userId, Long certificateId, String csrPath, String status) {
+    public CsrRequest(Integer userId, Long certificateId, String csrPath, String status) {
         this.certificateId = certificateId;
         this.userId = userId;
         this.csrPath = csrPath;
         this.status = status;
     }
     public Long getId() { return id; }
-    public Long getUserId() { return userId; }
-    public void setUserId(Long userId) { this.userId = userId; }
+    public Integer getUserId() { return userId; }
+    public void setUserId(Integer userId) { this.userId = userId; }
 
     public Long getCertificateId() { return certificateId; }
     public void setCertificateId(Long certificateId) { this.certificateId = certificateId; }
