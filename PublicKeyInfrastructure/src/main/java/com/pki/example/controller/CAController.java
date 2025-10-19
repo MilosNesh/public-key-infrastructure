@@ -3,7 +3,6 @@ package com.pki.example.controller;
 import com.pki.example.data.CARequest;
 import com.pki.example.data.CertificateResponse;
 import com.pki.example.data.IntermediateCARequest;
-import com.pki.example.service.CAService;
 import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -17,7 +16,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CAController {
 
-    private final CAService caService;
     private final CertificateService certificateService;
 
     @PostMapping("/root")
@@ -30,7 +28,7 @@ public class CAController {
 
     @PostMapping("/intermediate/{issuerUserId}")
     public ResponseEntity<CertificateResponse> createIntermediateCA(
-            @PathVariable Integer issuerUserId,
+            @PathVariable Long issuerUserId,
             @RequestBody IntermediateCARequest request) throws Exception {
 
         // Koristi NOVI servis (čuva lozinke u bazi)
@@ -38,4 +36,9 @@ public class CAController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/all")
+    public ResponseEntity<List<CertificateResponse>> getAll() throws Exception {
+        List<CertificateResponse> allCertificates = certificateService.getAll();
+        return ResponseEntity.ok(allCertificates);
+    }
 }

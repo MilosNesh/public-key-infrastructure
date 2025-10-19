@@ -21,10 +21,13 @@ import java.io.FileInputStream;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.cert.X509Certificate;
+import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class CertificateServiceImpl implements CertificateService {
@@ -90,7 +93,7 @@ public class CertificateServiceImpl implements CertificateService {
 
 
         // 8. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1)
+        User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         
         UserCertificate userCertificate = new UserCertificate(
@@ -127,7 +130,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Integer issuerUserId) throws Exception {
+    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception {
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
 
@@ -261,7 +264,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
         // 10. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1)
+        User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         UserCertificate userCertificate = new UserCertificate(
                 user,
@@ -319,6 +322,162 @@ public class CertificateServiceImpl implements CertificateService {
         }
 
         return chain;
+    }
+
+    /**
+     * Pokušava da pronađe alias za specifični certificate ID u keystore-u
+     */
+    private String findAliasForCertificateId(String keystorePath, String password, Long certificateId) {
+        try (FileInputStream fis = new FileInputStream(keystorePath)) {
+            KeyStore ks = KeyStore.getInstance("JKS");
+            ks.load(fis, password.toCharArray());
+            
+            Enumeration<String> aliases = ks.aliases();
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                if (ks.isKeyEntry(alias)) {
+                    // Ako imamo certificate ID, možemo da proverimo serial number
+                    // ili da koristimo alias kao identifikator
+                    return alias;
+                }
+            }
+            
+            // Fallback: koristi certificate ID kao string za alias
+            return certificateId.toString();
+            
+        } catch (Exception e) {
+            System.err.println("Greška pri pronalaženju alias-a: " + e.getMessage());
+            return null;
+        }
+    }
+    
+
+    /**
+     * Proverava da li je sertifikat intermediate sertifikat izdato od specifičnog root-a
+     */
+    private boolean isIntermediateCertificateForRoot(X509Certificate cert, String rootSubjectDN) {
+        try {
+            String certIssuerDN = cert.getIssuerDN().toString();
+            String certSubjectDN = cert.getSubjectDN().toString();
+            
+            System.out.println("Proveravam da li je intermediate:");
+            System.out.println("  Root Subject DN: " + rootSubjectDN);
+            System.out.println("  Cert Issuer DN:  " + certIssuerDN);
+            System.out.println("  Cert Subject DN: " + certSubjectDN);
+            
+            // Intermediate sertifikat mora biti izdato od root-a (issuerDN = rootSubjectDN)
+            // i ne sme biti self-signed
+            boolean issuerMatches = rootSubjectDN.equals(certIssuerDN);
+            boolean notSelfSigned = !certIssuerDN.equals(certSubjectDN);
+            
+            System.out.println("  Issuer matches root: " + issuerMatches);
+            System.out.println("  Not self-signed: " + notSelfSigned);
+            
+            boolean isIntermediateForRoot = issuerMatches && notSelfSigned;
+            System.out.println("  Is intermediate: " + isIntermediateForRoot);
+            
+            return isIntermediateForRoot;
+            
+        } catch (Exception e) {
+            System.err.println("Greška pri proveri intermediate sertifikata: " + e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public List<CertificateResponse> getAll() throws Exception {
+        List<CertificateResponse> result = new ArrayList<>();
+        Set<String> seenSerialNumbers = new HashSet<>();
+        
+        System.out.println("Tražim sve sertifikate iz user_certificates tabele...");
+        
+        // Uzmi sve UserCertificate entitete
+        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
+        System.out.println("Ukupno UserCertificate entiteta: " + userCertificates.size());
+        
+        for (UserCertificate userCert : userCertificates) {
+            try {
+                String keystorePath = userCert.getKeystorePath();
+                String password = userCert.getKeystorePassword();
+                String alias = findAliasForCertificateId(keystorePath, password, userCert.getCertificateId());
+                
+                if (alias != null) {
+                    System.out.println("Proveravam alias: " + alias + " u keystore: " + keystorePath);
+                    
+                    // Prvo proveri lanac sertifikata
+                    X509Certificate[] chain = keyStoreReader.readChain(keystorePath, password.toCharArray(), alias);
+                    
+                    if (chain != null && chain.length > 0) {
+                        System.out.println("Lanac ima " + chain.length + " sertifikata");
+                        
+                        // Dodaj sve sertifikate iz lanca
+                        for (int i = 0; i < chain.length; i++) {
+                            X509Certificate cert = chain[i];
+                            String serialNumber = cert.getSerialNumber().toString();
+                            
+                            if (!seenSerialNumbers.contains(serialNumber)) {
+                                seenSerialNumbers.add(serialNumber);
+                                
+                                CertificateResponse response = createCertificateResponse(cert, alias, i == chain.length - 1);
+                                result.add(response);
+                                
+                                System.out.println("Dodao sertifikat " + (i + 1) + " iz lanca: " + cert.getSubjectDN());
+                            }
+                        }
+                    }
+                    
+                    // Takođe proveri individualni sertifikat (možda nije u lancu)
+                    try {
+                        java.security.cert.Certificate singleCert = keyStoreReader.readCertificate(keystorePath, password, alias);
+                        if (singleCert instanceof X509Certificate) {
+                            X509Certificate x509Cert = (X509Certificate) singleCert;
+                            String serialNumber = x509Cert.getSerialNumber().toString();
+                            
+                            if (!seenSerialNumbers.contains(serialNumber)) {
+                                seenSerialNumbers.add(serialNumber);
+                                
+                                CertificateResponse response = createCertificateResponse(x509Cert, alias, false);
+                                result.add(response);
+                                
+                                System.out.println("Dodao individualni sertifikat: " + x509Cert.getSubjectDN());
+                            }
+                        }
+                    } catch (Exception e) {
+                        System.out.println("Nema individualnog sertifikata za alias: " + alias);
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Greška pri čitanju sertifikata za UserCertificate ID: " + userCert.getId() + 
+                                 ", greška: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+        
+        System.out.println("Ukupno pronađeno sertifikata: " + result.size());
+        return result;
+    }
+    
+    /**
+     * Pomoćna metoda za kreiranje CertificateResponse objekta
+     */
+    private CertificateResponse createCertificateResponse(X509Certificate cert, String alias, boolean isLastInChain) throws Exception{
+        CertificateResponse response = new CertificateResponse();
+        response.setAlias(alias);
+        response.setSubjectDN(cert.getSubjectDN().toString());
+        response.setIssuerDN(cert.getIssuerDN().toString());
+        response.setSerialNumber(cert.getSerialNumber().toString());
+        response.setNotBefore(cert.getNotBefore());
+        response.setNotAfter(cert.getNotAfter());
+        response.setCertificatePEM(Base64.getEncoder().encodeToString(cert.getEncoded()));
+        
+        // Dodaj opis tipa sertifikata
+        if (cert.getIssuerDN().equals(cert.getSubjectDN())) {
+            response.setMessage("Root CA sertifikat (self-signed)");
+        } else {
+            response.setMessage("Certificate - Issuer: " + cert.getIssuerDN().getName());
+        }
+        
+        return response;
     }
 
 }

@@ -20,7 +20,12 @@ public interface CertificateService {
      * @param request IntermediateCARequest sa svim podacima
      * @return CertificateResponse sa informacijama o kreiranom sertifikatu
      */
-    CertificateResponse createIntermediateCA(IntermediateCARequest request, Integer issuerUserId) throws Exception;
+    CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception;
 
+    /**
+     * Vraća sve sertifikate (root, intermediate, end-entity) iz user_certificates tabele
+     * @return Lista CertificateResponse objekata koji predstavljaju sve sertifikate bez duplikata
+     */
+    List<CertificateResponse> getAll() throws Exception;
 }
 
