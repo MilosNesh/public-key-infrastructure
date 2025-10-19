@@ -34,6 +34,8 @@ public class SecurityConfig {
                 .antMatchers("/auth/login").permitAll()
                 .antMatchers("/auth/recover").permitAll()
                 .antMatchers("/auth/recoverylink").permitAll()
+                .antMatchers("/intermediate/{issuerUserId}").permitAll()
+                .antMatchers("/root").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .httpBasic();
