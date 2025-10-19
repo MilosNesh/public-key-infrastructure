@@ -65,7 +65,6 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
             LOGGER.debug("Token expired!");
         }
 
-        // prosledi request dalje u sledeci filter
         chain.doFilter(request, response);
     }
 

@@ -90,7 +90,7 @@ public class CertificateServiceImpl implements CertificateService {
 
 
         // 8. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1)
+        User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         
         UserCertificate userCertificate = new UserCertificate(
@@ -261,7 +261,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
         // 10. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
-        User user = userRepository.findById(1)
+        User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
         UserCertificate userCertificate = new UserCertificate(
                 user,

@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -32,6 +33,9 @@ public class AuthController {
     private Captcha captcha;
     @Autowired
     private MailService mailService;
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
 
     @PostMapping("/register")
     public ResponseEntity<UserDTO> registration(@RequestBody UserDTO userDTO) {
@@ -97,12 +101,12 @@ public class AuthController {
         if (!captchaOk) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("CAPTCHA failed");
         }
-//        Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
-//                authenticationRequest.getEmail(), authenticationRequest.getPassword()));
+        Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
+                authenticationRequest.getEmail(), authenticationRequest.getPassword()));
 
-//        SecurityContextHolder.getContext().setAuthentication(authentication);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
 
-//        User user = (User) authentication.getPrincipal();
+        User user = (User) authentication.getPrincipal();
         String jwt = tokenUtils.generateToken(userByEmail);
 //        int expiresIn = tokenUtils.getExpiredIn();
 
@@ -132,6 +136,16 @@ public class AuthController {
         return ResponseEntity.ok("");
     }
 
+    @GetMapping("/test")
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> test() {
+        return ResponseEntity.ok("Radi");
+    }
 
+    @GetMapping("/test2")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<String> test2() {
+        return ResponseEntity.ok("Radi admin");
+    }
 
 }
