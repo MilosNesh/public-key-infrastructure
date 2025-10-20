@@ -84,7 +84,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> createAuthenticationToken(
+    public ResponseEntity<String> login(
             @RequestBody LoginDetailsDTO authenticationRequest, HttpServletResponse response) {
 
         User userByEmail = userService.getByEmail(authenticationRequest.getEmail());

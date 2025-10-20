@@ -72,7 +72,7 @@ public class MailServiceImpl implements MailService {
 
         helper.setTo(user.getEmail());
         helper.setFrom(env.getProperty("spring.mail.username"));
-        helper.setSubject("Public Key Infrastructure - Activate Account");
+        helper.setSubject("Public Key Infrastructure - Recover Account");
 
         String activationLink = "https://localhost:4200/recover/" + tokenUtils.generateActivationAndResetToken(user, 5*60*1000);
 
