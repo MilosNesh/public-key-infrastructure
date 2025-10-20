@@ -18,6 +18,6 @@ public class CertificateResponse {
     private String serialNumber;
     private Date notBefore;
     private Date notAfter;
-    private String certificatePEM;       // Base64 encoded sertifikat
+           // Base64 encoded sertifikat
     private String message;
 }

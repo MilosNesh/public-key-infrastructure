@@ -2,7 +2,9 @@ package com.pki.example.service;
 
 import com.pki.example.data.CARequest;
 import com.pki.example.data.CertificateResponse;
+import com.pki.example.data.ExtendedRequest;
 import com.pki.example.data.IntermediateCARequest;
+import com.pki.example.dto.ExtendedCAResponseDTO;
 
 import java.util.List;
 
@@ -10,17 +12,34 @@ public interface CertificateService {
     
     /**
      * Generiše Root CA sertifikat, čuva ga u keystore i lozinku u bazi
-     * @param request CARequest sa svim podacima
-     * @return CertificateResponse sa informacijama o kreiranom sertifikatu
+     * @param request ExtendedRequest sa svim podacima
+     * @return ExtendedCAResponseDTO sa informacijama o kreiranom sertifikatu
      */
-    CertificateResponse createRootCA(CARequest request) throws Exception;
+    ExtendedCAResponseDTO createRootCA(ExtendedRequest request) throws Exception;
 
     /**
      * Generiše Intermediate CA sertifikat, čuva ga u keystore i lozinku u bazi
-     * @param request IntermediateCARequest sa svim podacima
-     * @return CertificateResponse sa informacijama o kreiranom sertifikatu
+     * @param request ExtendedRequest sa svim podacima
+     * @return ExtendedCAResponseDTO sa informacijama o kreiranom sertifikatu
      */
-    CertificateResponse createIntermediateCA(IntermediateCARequest request, Integer issuerUserId) throws Exception;
+    ExtendedCAResponseDTO createIntermediateCA(ExtendedRequest request, Long issuerUserId) throws Exception;
 
+    /**
+     * Vraća sve sertifikate (root, intermediate, end-entity) iz user_certificates tabele
+     * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju sve sertifikate bez duplikata
+     */
+    List<ExtendedCAResponseDTO> getAll() throws Exception;
+
+    /**
+     * Vraća sve alias-e CA sertifikata koji mogu da potpisuju druge sertifikate (nisu povučeni)
+     * @return Lista alias-a sertifikata koji imaju BasicConstraints CA=true i KeyUsage keyCertSign=true
+     */
+    List<String> getAllValidCAAliases() throws Exception;
+
+    /**
+     * Vraća sve End Entity sertifikate čitajući DER fajlove iz end-entity foldera
+     * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju End Entity sertifikate
+     */
+    List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception;
 }
 

@@ -25,7 +25,7 @@ public class UserCertificate {
     @Column(name = "certificate_id", nullable = false)
     private Long certificateId;
     
-    @Column(name = "keystore_password", nullable = false, length = 255)
+    @Column(name = "keystore_password", nullable = true, length = 255)
     private String keystorePassword;  // Plain text lozinka (TODO: šifrovati kasnije)
     
     @Column(name = "keystore_path", nullable = false, length = 500)
