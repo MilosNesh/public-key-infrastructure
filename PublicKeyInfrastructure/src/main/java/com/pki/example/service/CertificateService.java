@@ -35,5 +35,11 @@ public interface CertificateService {
      * @return Lista alias-a sertifikata koji imaju BasicConstraints CA=true i KeyUsage keyCertSign=true
      */
     List<String> getAllValidCAAliases() throws Exception;
+
+    /**
+     * Vraća sve End Entity sertifikate čitajući DER fajlove iz end-entity foldera
+     * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju End Entity sertifikate
+     */
+    List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception;
 }
 

@@ -18,9 +18,16 @@ import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.security.*;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.security.KeyStore;
 import java.time.LocalDate;
@@ -58,6 +65,13 @@ public class CertificateServiceImpl implements CertificateService {
     public ExtendedCAResponseDTO createRootCA(ExtendedRequest request) throws Exception {
 
         System.out.println("Issuerrrr: " + request.getIssuerAlias());
+        
+        // Proveri da li je End Entity sertifikat (isCA = false)
+        if (request.getIsCA() != null && !request.getIsCA()) {
+            System.out.println("Kreiranje End Entity sertifikata (isCA = false)");
+            return createEndEntityCertificate(request);
+        }
+        
         // Proveri da li je Intermediate CA (ima issuerAlias) ili Root CA
         if (request.getIssuerAlias() != null && !request.getIssuerAlias().trim().isEmpty()) {
             // Ovo je Intermediate CA - pozovi logiku za Intermediate CA
@@ -567,6 +581,70 @@ public class CertificateServiceImpl implements CertificateService {
         return validCAAliases;
     }
 
+    @Override
+    public List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception {
+        List<ExtendedCAResponseDTO> result = new ArrayList<>();
+        
+        System.out.println("Tražim sve End Entity sertifikate iz end-entity foldera...");
+        
+        try {
+            Path endEntityDir = Paths.get("src/main/resources/end-entity");
+            
+            // Proveri da li folder postoji
+            if (!Files.exists(endEntityDir)) {
+                System.out.println("end-entity folder ne postoji");
+                return result;
+            }
+            
+            // Lista sve .der fajlove u folderu
+            Files.list(endEntityDir)
+                .filter(path -> path.toString().toLowerCase().endsWith("_ee.der"))
+                .forEach(derFile -> {
+                    try {
+                        System.out.println("Čitam End Entity sertifikat: " + derFile.getFileName());
+                        
+                        // Učitaj DER sertifikat
+                        byte[] derBytes = Files.readAllBytes(derFile);
+                        X509Certificate cert = loadCertificateFromDer(derBytes);
+                        
+                        // Generiši alias na osnovu imena fajla
+                        String fileName = derFile.getFileName().toString();
+                        String alias = fileName.replace("_ee.der", "").replace(".der", "");
+                        
+                        // Kreiraj ExtendedCAResponseDTO
+                        ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
+                        response.setMessage("End Entity sertifikat čitan iz DER fajla: " + fileName);
+                        
+                        result.add(response);
+                        System.out.println("✓ Dodao End Entity sertifikat: " + cert.getSubjectDN());
+                        
+                    } catch (Exception e) {
+                        System.err.println("Greška pri čitanju End Entity sertifikata " + derFile.getFileName() + ": " + e.getMessage());
+                    }
+                });
+                
+        } catch (IOException e) {
+            System.err.println("Greška pri pristupanju end-entity folderu: " + e.getMessage());
+            throw new Exception("Ne mogu da pristupim end-entity folderu: " + e.getMessage());
+        }
+        
+        System.out.println("Ukupno pronađeno End Entity sertifikata: " + result.size());
+        return result;
+    }
+
+    /**
+     * Pomoćna metoda za učitavanje sertifikata iz DER bytes
+     */
+    private X509Certificate loadCertificateFromDer(byte[] derBytes) throws Exception {
+        try {
+            java.security.cert.CertificateFactory certFactory = java.security.cert.CertificateFactory.getInstance("X.509");
+            ByteArrayInputStream bais = new ByteArrayInputStream(derBytes);
+            return (X509Certificate) certFactory.generateCertificate(bais);
+        } catch (Exception e) {
+            throw new Exception("Greška pri učitavanju sertifikata iz DER formata: " + e.getMessage());
+        }
+    }
+
     /**
      * Pomoćna metoda za proveru da li sertifikat može da potpisuje druge sertifikate (CA)
      */
@@ -937,6 +1015,157 @@ public class CertificateServiceImpl implements CertificateService {
             // Ako ne možemo da parsujemo DN, vratimo null
         }
         return null;
+    }
+
+    /**
+     * Kreira End Entity sertifikat na osnovu ExtendedRequest i čuva ga u DER formatu
+     */
+    private ExtendedCAResponseDTO createEndEntityCertificate(ExtendedRequest request) throws Exception {
+        System.out.println("=== KREIRANJE END ENTITY SERTIFIKATA ===");
+        
+        // 1. Generisanje RSA ključeva za End Entity
+        KeyPair keyPair = generateKeyPair();
+        
+        // 2. Kreiranje X500Name za End Entity subject
+        X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
+        builder.addRDN(BCStyle.CN, request.getCommonName());
+        if (request.getOrganization() != null) {
+            builder.addRDN(BCStyle.O, request.getOrganization());
+        }
+        if (request.getOrganizationalUnit() != null) {
+            builder.addRDN(BCStyle.OU, request.getOrganizationalUnit());
+        }
+        if (request.getCountry() != null) {
+            builder.addRDN(BCStyle.C, request.getCountry());
+        }
+        if (request.getEmail() != null) {
+            builder.addRDN(BCStyle.E, request.getEmail());
+        }
+        
+        Subject subject = new Subject(keyPair.getPublic(), builder.build());
+        
+        // 3. Trebamo issuer sertifikat - za End Entity sertifikate koristimo prvi dostupni CA
+        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(1L);
+        if (userCertificates.isEmpty()) {
+            throw new Exception("Nema dostupnih CA sertifikata za potpisivanje End Entity sertifikata!");
+        }
+        
+        // Pronađi valjani CA sertifikat (ne samo prvi UserCertificate)
+        UserCertificate caCertificate = null;
+        for (UserCertificate uc : userCertificates) {
+            try {
+                String keystorePath = uc.getKeystorePath();
+                String password = uc.getKeystorePassword();
+                String alias = findAliasForCertificateId(keystorePath, password, uc.getCertificateId());
+                
+                if (alias != null) {
+                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, password, alias);
+                    if (isValidCASigner(cert)) {
+                        caCertificate = uc;
+                        System.out.println("Pronašao valjani CA sertifikat za potpisivanje: " + alias);
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Greška pri proveri CA sertifikata: " + e.getMessage());
+            }
+        }
+        
+        if (caCertificate == null) {
+            throw new Exception("Nema valjanih CA sertifikata za potpisivanje End Entity sertifikata!");
+        }
+        
+        // Učitaj issuer CA sertifikat - već znamo da je caCertificate valjan
+        String caAlias = findAliasForCertificateId(caCertificate.getKeystorePath(), 
+                                                  caCertificate.getKeystorePassword(), 
+                                                  caCertificate.getCertificateId());
+        
+        if (caAlias == null) {
+            throw new Exception("Ne mogu da pronađem alias za CA sertifikat!");
+        }
+        
+        Issuer issuer = keyStoreReader.readIssuerFromStore(
+                caCertificate.getKeystorePath(),
+                caAlias,
+                caCertificate.getKeystorePassword().toCharArray(),
+                caCertificate.getKeystorePassword().toCharArray()
+        );
+        
+        X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
+                caCertificate.getKeystorePath(),
+                caCertificate.getKeystorePassword(),
+                caAlias
+        );
+        
+        if (issuer == null || issuerCert == null) {
+            throw new Exception("Ne mogu da učitam CA sertifikat za potpisivanje!");
+        }
+        
+        System.out.println("Koristim CA sertifikat: " + issuerCert.getSubjectDN());
+        
+        // 4. Konvertovanje LocalDate u Date
+        Date startDate = request.getStartDate() != null 
+            ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+            : new Date();
+        Date endDate = request.getEndDate() != null 
+            ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+            : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000)); // +1 godina default
+        
+        // 5. Generisanje serial number
+        String serialNumber = (request.getSerialNumber() != null && !request.getSerialNumber().trim().isEmpty())
+            ? request.getSerialNumber()
+            : SerialNumberUtil.generateSerial(32).toString();
+        
+        // 6. Generisanje End Entity sertifikata
+        X509Certificate endEntityCert = caCertificateGenerator.generateEndEntityCertificate(
+                subject,
+                issuer,
+                issuerCert,
+                startDate,
+                endDate,
+                serialNumber
+        );
+        
+        // 7. Čuvanje sertifikata u DER formatu
+        String cn = request.getCommonName();
+        if (cn == null || cn.trim().isEmpty()) {
+            cn = "end-entity";
+        }
+        String safeFile = cn.replaceAll("[^a-zA-Z0-9._-]", "_");
+        
+        Path outDir = Paths.get("src/main/resources/end-entity");
+        Files.createDirectories(outDir);
+        
+        Path certPath = outDir.resolve(safeFile + "_ee.der");
+        writeCertificateDer(endEntityCert, certPath);
+        
+        System.out.println("End Entity sertifikat sačuvan u: " + certPath);
+
+        //kreiranje user-certificate reda u tabeli
+        User user = userRepository.findById(1L)
+                .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
+
+        UserCertificate userCertificate = new UserCertificate(
+                user,
+                Long.parseLong(serialNumber),
+                null,
+                certPath.toString()
+        );
+        userCertificateRepository.save(userCertificate);
+        
+        // 8. Kreiranje response DTO-ja
+        ExtendedCAResponseDTO response = createExtendedCAResponseDTO(endEntityCert, safeFile, request, null);
+        response.setMessage("End Entity sertifikat uspešno kreiran i sačuvan u DER formatu: " + certPath);
+        
+        return response;
+    }
+    
+    /**
+     * Pomoćna metoda za čuvanje sertifikata u DER formatu
+     */
+    private void writeCertificateDer(X509Certificate cert, Path path) throws IOException, CertificateEncodingException {
+        byte[] der = cert.getEncoded(); // ASN.1 DER binary
+        Files.write(path, der, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
 }
