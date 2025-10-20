@@ -521,6 +521,95 @@ public class CertificateServiceImpl implements CertificateService {
         System.out.println("Ukupno pronađeno sertifikata: " + result.size());
         return result;
     }
+
+    @Override
+    public List<String> getAllValidCAAliases() throws Exception {
+        List<String> validCAAliases = new ArrayList<>();
+        
+        System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
+        
+        // Uzmi sve UserCertificate entitete
+        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
+        System.out.println("Ukupno UserCertificate entiteta za proveru CA: " + userCertificates.size());
+        
+        for (UserCertificate userCert : userCertificates) {
+            try {
+                String keystorePath = userCert.getKeystorePath();
+                String password = userCert.getKeystorePassword();
+                String alias = findAliasForCertificateId(keystorePath, password, userCert.getCertificateId());
+                
+                if (alias != null) {
+                    System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + keystorePath);
+                    
+                    try {
+                        // Učitaj sertifikat
+                        X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, password, alias);
+                        
+                        // Proveri da li je valjan CA sertifikat
+                        if (isValidCASigner(cert)) {
+                            validCAAliases.add(alias);
+                            System.out.println("✓ Dodao validni CA alias: " + alias);
+                        } else {
+                            System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
+                        }
+                        
+                    } catch (Exception e) {
+                        System.err.println("Greška pri čitanju sertifikata za alias " + alias + ": " + e.getMessage());
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Greška pri proveri CA alias-a za UserCertificate ID: " + userCert.getId() + 
+                                 ", greška: " + e.getMessage());
+            }
+        }
+        
+        System.out.println("Ukupno pronađeno validnih CA alias-a: " + validCAAliases.size());
+        return validCAAliases;
+    }
+
+    /**
+     * Pomoćna metoda za proveru da li sertifikat može da potpisuje druge sertifikate (CA)
+     */
+    private boolean isValidCASigner(X509Certificate cert) {
+        try {
+            // 1. Proveri period važenja
+            cert.checkValidity();
+            
+            // 2. Proveri BasicConstraints - mora biti CA
+            int basicConstraints = cert.getBasicConstraints();
+            boolean isCA = basicConstraints != -1;
+            if (!isCA) {
+                System.out.println("  ✗ Nije CA sertifikat (BasicConstraints = -1)");
+                return false;
+            }
+            
+            // 3. Proveri KeyUsage - mora imati keyCertSign
+            boolean[] ku = cert.getKeyUsage();
+            if (ku != null) {
+                boolean keyCertSign = ku.length > 5 && ku[5];
+                boolean cRLSign = ku.length > 6 && ku[6];
+                
+                if (!keyCertSign) {
+                    System.out.println("  ✗ Nema keyCertSign u KeyUsage");
+                    return false;
+                }
+                
+                System.out.println("  ✓ BasicConstraints CA: " + isCA + ", keyCertSign: " + keyCertSign + ", cRLSign: " + cRLSign);
+            } else {
+                System.out.println("  ✗ KeyUsage nije postavljen");
+                return false;
+            }
+            
+            // 4. TODO: Proveri CRL status (trenutno nije implementirano)
+            // Ovde bi trebalo dodati proveru CRL liste da vidimo da li je sertifikat povučen
+            
+            return true;
+            
+        } catch (Exception e) {
+            System.err.println("Greška pri validaciji CA sertifikata: " + e.getMessage());
+            return false;
+        }
+    }
     
     /**
      * Pomoćna metoda za kreiranje CertificateResponse objekta

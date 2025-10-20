@@ -29,5 +29,11 @@ public interface CertificateService {
      * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju sve sertifikate bez duplikata
      */
     List<ExtendedCAResponseDTO> getAll() throws Exception;
+
+    /**
+     * Vraća sve alias-e CA sertifikata koji mogu da potpisuju druge sertifikate (nisu povučeni)
+     * @return Lista alias-a sertifikata koji imaju BasicConstraints CA=true i KeyUsage keyCertSign=true
+     */
+    List<String> getAllValidCAAliases() throws Exception;
 }
 

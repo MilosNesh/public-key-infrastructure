@@ -43,4 +43,10 @@ public class CAController {
         List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll();
         return ResponseEntity.ok(allCertificates);
     }
+
+    @GetMapping("/valid-ca-aliases")
+    public ResponseEntity<List<String>> getAllValidCAAliases() throws Exception {
+        List<String> validCAAliases = certificateService.getAllValidCAAliases();
+        return ResponseEntity.ok(validCAAliases);
+    }
 }
