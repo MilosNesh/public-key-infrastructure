@@ -2,7 +2,9 @@ package com.pki.example.controller;
 
 import com.pki.example.data.CARequest;
 import com.pki.example.data.CertificateResponse;
+import com.pki.example.data.ExtendedRequest;
 import com.pki.example.data.IntermediateCARequest;
+import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -19,26 +21,26 @@ public class CAController {
     private final CertificateService certificateService;
 
     @PostMapping("/root")
-    public ResponseEntity<CertificateResponse> createRootCA(@RequestBody CARequest request) throws Exception {
+    public ResponseEntity<ExtendedCAResponseDTO> createRootCA(
+            @RequestBody ExtendedRequest request) throws Exception {
         // Koristi NOVI servis (čuva lozinke u bazi)
-        //CertificateResponse response = certificateService.createRootCA(request);
-        CertificateResponse response = certificateService.createRootCA(request);
+        ExtendedCAResponseDTO response = certificateService.createRootCA(request);
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/intermediate/{issuerUserId}")
-    public ResponseEntity<CertificateResponse> createIntermediateCA(
+    public ResponseEntity<ExtendedCAResponseDTO> createIntermediateCA(
             @PathVariable Long issuerUserId,
-            @RequestBody IntermediateCARequest request) throws Exception {
+            @RequestBody ExtendedRequest request) throws Exception {
 
         // Koristi NOVI servis (čuva lozinke u bazi)
-        CertificateResponse response = certificateService.createIntermediateCA(request, issuerUserId);
+        ExtendedCAResponseDTO response = certificateService.createIntermediateCA(request, issuerUserId);
         return ResponseEntity.ok(response);
     }
 
     @GetMapping("/all")
-    public ResponseEntity<List<CertificateResponse>> getAll() throws Exception {
-        List<CertificateResponse> allCertificates = certificateService.getAll();
+    public ResponseEntity<List<ExtendedCAResponseDTO>> getAll() throws Exception {
+        List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll();
         return ResponseEntity.ok(allCertificates);
     }
 }

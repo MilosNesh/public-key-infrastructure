@@ -34,6 +34,8 @@ public class SecurityConfig {
                 .antMatchers("/auth/login").permitAll()
                 .antMatchers("/auth/recover").permitAll()
                 .antMatchers("/auth/recoverylink").permitAll()
+                //privremeno resenje
+                .antMatchers("/api/ca/**").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .httpBasic();

@@ -2,7 +2,7 @@ INSERT INTO ROLE (name) VALUES ('ROLE_USER');
 INSERT INTO ROLE (name) VALUES ('ROLE_CAUSER');
 INSERT INTO ROLE (name) VALUES ('ROLE_ADMIN');
 
-INSERT INTO public.users(
+INSERT INTO users(
     id, activation_token, email, name, organization, password, surname)
 VALUES (1, 'abc123', 'shone@gmail.com', 'nenad', 'ftn', '123456', 'dubovac');
 
