@@ -16,10 +16,18 @@ public class CertificateTemplate {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    
+    // Korisnik kome template pripada
+    @Column(nullable = false)
+    private Long userId;
 
     // Prikazno ime šablona (npr. "FTN Server Template")
     @Column(nullable = false, length = 128)
     private String name;
+    
+    // Label/oznaka za template (kraći naziv)
+    @Column(nullable = false, length = 64)
+    private String label;
 
     // Alias CA sertifikata koji potpisuje (kako ga već vodiš u svom sistemu/keystore-u)
     @Column(nullable = false, length = 128)

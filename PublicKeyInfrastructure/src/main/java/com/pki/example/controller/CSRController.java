@@ -34,7 +34,7 @@ public class CSRController {
     @PostMapping("/{csrId}/approve")
     public ResponseEntity<CertificateResponse> approveCSR(
             @PathVariable Long csrId,
-            @RequestParam("issuerUserId") Integer issuerUserId,
+            @RequestParam("issuerUserId") Long issuerUserId,
             @RequestParam("issuerAlias") String issuerAlias)  throws Exception {
         CertificateResponse response = csrService.approveCSR(csrId, issuerUserId, issuerAlias);
         return ResponseEntity.ok(response);

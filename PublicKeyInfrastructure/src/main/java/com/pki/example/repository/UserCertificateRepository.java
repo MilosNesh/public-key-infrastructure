@@ -13,7 +13,7 @@ public interface UserCertificateRepository extends JpaRepository<UserCertificate
     
     List<UserCertificate> findByUser(User user);
     
-    List<UserCertificate> findByUserId(Integer userId);
+    List<UserCertificate> findByUserId(Long userId);
     
     Optional<UserCertificate> findByCertificateId(Integer certificateId);
 

@@ -127,7 +127,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Integer issuerUserId) throws Exception {
+    public CertificateResponse createIntermediateCA(IntermediateCARequest request, Long issuerUserId) throws Exception {
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
 

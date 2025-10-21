@@ -67,7 +67,7 @@ public class CSRServiceImpl implements CSRService {
 
 
     @Override
-    public CertificateResponse approveCSR(Long csrId, Integer issuerUserId, String issuerAlias) throws Exception{
+    public CertificateResponse approveCSR(Long csrId, Long issuerUserId, String issuerAlias) throws Exception{
         System.out.println("CSR id: " + csrId);
         CsrRequest request = csrRepository.findById(csrId)
                 .orElseThrow(() -> new IllegalArgumentException("CSR not found"));

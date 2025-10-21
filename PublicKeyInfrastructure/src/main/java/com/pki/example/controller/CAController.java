@@ -30,7 +30,7 @@ public class CAController {
 
     @PostMapping("/intermediate/{issuerUserId}")
     public ResponseEntity<CertificateResponse> createIntermediateCA(
-            @PathVariable Integer issuerUserId,
+            @PathVariable Long issuerUserId,
             @RequestBody IntermediateCARequest request) throws Exception {
 
         // Koristi NOVI servis (čuva lozinke u bazi)
