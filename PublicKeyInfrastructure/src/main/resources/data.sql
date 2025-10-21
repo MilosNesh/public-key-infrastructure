@@ -22,12 +22,3 @@ VALUES (2, 2);
 INSERT INTO public.user_role(
     user_id, role_id)
 VALUES (3, 3);
-
-INSERT INTO csr_requests (user_id, certificate_id, csr_path, status, certificate_path)
-VALUES (
-           1,                                        -- user_id
-           10,                                       -- certificate_id (npr. ID šablona ili CA sertifikata)
-           'src/main/resources/csr/user_request.csr', -- putanja do CSR fajla
-           'PENDING',                                -- trenutni status
-           NULL                                      -- putanja do izdatog sertifikata (još nije generisan)
-       );

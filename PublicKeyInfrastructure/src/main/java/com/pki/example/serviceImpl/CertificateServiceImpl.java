@@ -3,6 +3,7 @@ package com.pki.example.serviceImpl;
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.*;
 import com.pki.example.domain.UserCertificate;
+import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
@@ -42,7 +43,7 @@ import java.util.Set;
 
 @Service
 public class CertificateServiceImpl implements CertificateService {
-    
+
     @Autowired
     private CACertificateGenerator caCertificateGenerator;
 
@@ -537,8 +538,8 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public List<String> getAllValidCAAliases() throws Exception {
-        List<String> validCAAliases = new ArrayList<>();
+    public List<CAWithValidityDTO> getAllValidCAAliases() throws Exception {
+        List<CAWithValidityDTO> validCAAliases = new ArrayList<>();
         
         System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
         
@@ -561,8 +562,14 @@ public class CertificateServiceImpl implements CertificateService {
                         
                         // Proveri da li je valjan CA sertifikat
                         if (isValidCASigner(cert)) {
-                            validCAAliases.add(alias);
-                            System.out.println("✓ Dodao validni CA alias: " + alias);
+                            CAWithValidityDTO dto = new CAWithValidityDTO(
+                                alias,
+                                cert.getNotBefore(),
+                                cert.getNotAfter()
+                            );
+                            validCAAliases.add(dto);
+                            System.out.println("✓ Dodao validni CA alias: " + alias + 
+                                " (valid from " + cert.getNotBefore() + " to " + cert.getNotAfter() + ")");
                         } else {
                             System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
                         }

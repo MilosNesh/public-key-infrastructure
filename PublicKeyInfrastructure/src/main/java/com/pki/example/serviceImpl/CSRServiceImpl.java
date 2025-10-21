@@ -5,6 +5,7 @@ import com.pki.example.data.CertificateResponse;
 import com.pki.example.data.Issuer;
 import com.pki.example.domain.CsrRequest;
 import com.pki.example.domain.UserCertificate;
+import com.pki.example.dto.CsrResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
 import com.pki.example.repo.CsrRepository;
@@ -37,10 +38,12 @@ import java.security.KeyStore;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
+import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
@@ -117,9 +120,16 @@ public class CSRServiceImpl implements CSRService {
                 matchingCertificate.getKeystorePassword().toCharArray()
         );
 
-        // 3) Validnost (primer: danas do +1 godina; prilagodi potrebama)
-        Date startDate = new Date();
-        Date endDate   = Date.from(Instant.now().plus(365, ChronoUnit.DAYS));
+        // 3) Koristi datume iz CSR request-a ako postoje, inače koristi default vrednosti
+        Date startDate = request.getStartDate();
+        Date endDate = request.getEndDate();
+        
+        if (startDate == null) {
+            startDate = new Date();
+        }
+        if (endDate == null) {
+            endDate = Date.from(Instant.now().plus(365, ChronoUnit.DAYS));
+        }
 
         // 4) Serijski broj (160-bit random, pozitivan)
         BigInteger serial32 = SerialNumberUtil.generateSerial(32);
@@ -190,7 +200,7 @@ public class CSRServiceImpl implements CSRService {
 
 
     @Override
-    public Long saveCSR(MultipartFile file, Long userId) throws Exception {
+    public Long saveCSR(MultipartFile file, Long userId, String issuerAlias, String startDateStr, String endDateStr) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("Prazan fajl.");
         }
@@ -223,16 +233,49 @@ public class CSRServiceImpl implements CSRService {
         // 6) Upis na disk
         Files.write(out, raw, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
 
-        // 7) Zapiši u bazu
+        // 7) Parsiraj datume iz stringova (očekuje se ISO format kao "2024-10-21T00:00:00.000Z")
+        Date startDate = null;
+        Date endDate = null;
+        if (startDateStr != null && !startDateStr.isEmpty()) {
+            startDate = parseISODate(startDateStr);
+        }
+        if (endDateStr != null && !endDateStr.isEmpty()) {
+            endDate = parseISODate(endDateStr);
+        }
+
+        // 8) Zapiši u bazu
         CsrRequest entity = new CsrRequest();
         entity.setUserId(userId);
         entity.setCsrPath(out.toString());
         entity.setStatus("pending"); // dogovoreno stanje
-        // opciono: sačuvaj subject CN/email radi lakšeg pregleda
-        // entity.setSubjectCn(cn);
+        entity.setIssuerAlias(issuerAlias);
+        entity.setStartDate(startDate);
+        entity.setEndDate(endDate);
 
         CsrRequest saved = csrRepository.save(entity);
         return saved.getId();
+    }
+    
+    /**
+     * Parsira ISO 8601 datum string u Date objekat.
+     * Podržava formate: "2024-10-21T00:00:00.000Z" ili "2024-10-21T00:00:00"
+     */
+    private Date parseISODate(String dateStr) throws Exception {
+        try {
+            // Probaj sa ISO formatom koji uključuje milisekunde i timezone
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+            sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            return sdf.parse(dateStr);
+        } catch (Exception e1) {
+            try {
+                // Probaj sa jednostavnijim formatom bez timezone
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+                return sdf.parse(dateStr);
+            } catch (Exception e2) {
+                throw new IllegalArgumentException("Neispravan format datuma: " + dateStr + 
+                    ". Očekivan format: yyyy-MM-dd'T'HH:mm:ss.SSS'Z' ili yyyy-MM-dd'T'HH:mm:ss");
+            }
+        }
     }
 
     /** Provera potpisa CSR-a javnim ključem iz samog CSR-a. */
@@ -256,6 +299,84 @@ public class CSRServiceImpl implements CSRService {
     /** Sanitizacija naziva fajla. */
     private String sanitize(String input) {
         return input.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    @Override
+    public List<CsrResponseDTO> getCsrsByUserId(Long userId) throws Exception {
+        List<CsrResponseDTO> result = new ArrayList<>();
+        
+        // Pronađi sve CSR zahteve za datog korisnika
+        List<CsrRequest> csrRequests = csrRepository.findByUserId(userId);
+        
+        for (CsrRequest csrRequest : csrRequests) {
+            try {
+                // Učitaj CSR fajl sa diska
+                Path csrPath = Paths.get(csrRequest.getCsrPath());
+                
+                if (!Files.exists(csrPath)) {
+                    System.err.println("CSR fajl ne postoji: " + csrPath);
+                    continue;
+                }
+                
+                byte[] csrBytes = Files.readAllBytes(csrPath);
+                
+                // Konvertuj u PEM format (ako već nije)
+                String csrPem = convertToPem(csrBytes);
+                
+                // Kreiraj DTO
+                CsrResponseDTO dto = new CsrResponseDTO();
+                dto.setId(csrRequest.getId());
+                dto.setUserId(csrRequest.getUserId());
+                dto.setCsrPem(csrPem);
+                dto.setStatus(csrRequest.getStatus());
+                dto.setIssuerAlias(csrRequest.getIssuerAlias());
+                dto.setStartDate(csrRequest.getStartDate());
+                dto.setEndDate(csrRequest.getEndDate());
+                dto.setCertificatePath(csrRequest.getCertificatePath());
+                
+                result.add(dto);
+                
+            } catch (Exception e) {
+                System.err.println("Greška pri učitavanju CSR-a ID " + csrRequest.getId() + ": " + e.getMessage());
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Konvertuje CSR bajtove u PEM format string.
+     * Ako je već PEM, vrati kao string. Ako je DER, konvertuj u PEM.
+     */
+    private String convertToPem(byte[] csrBytes) throws Exception {
+        String s = new String(csrBytes, StandardCharsets.UTF_8).trim();
+        
+        // Ako već jeste PEM format, vrati ga
+        if (s.startsWith("-----BEGIN CERTIFICATE REQUEST-----")) {
+            return s;
+        }
+        
+        // Inače je DER format - konvertuj u PEM
+        PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrBytes);
+        
+        // Konvertuj u Base64 i formatiraj kao PEM
+        byte[] encoded = csr.getEncoded();
+        String base64 = Base64.getEncoder().encodeToString(encoded);
+        
+        // Razbij u linije po 64 karaktera (PEM standard)
+        StringBuilder pem = new StringBuilder();
+        pem.append("-----BEGIN CERTIFICATE REQUEST-----\n");
+        
+        int index = 0;
+        while (index < base64.length()) {
+            int endIndex = Math.min(index + 64, base64.length());
+            pem.append(base64, index, endIndex).append("\n");
+            index = endIndex;
+        }
+        
+        pem.append("-----END CERTIFICATE REQUEST-----");
+        
+        return pem.toString();
     }
 
 }

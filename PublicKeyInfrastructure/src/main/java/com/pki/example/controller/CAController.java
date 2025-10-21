@@ -4,6 +4,7 @@ import com.pki.example.data.CARequest;
 import com.pki.example.data.CertificateResponse;
 import com.pki.example.data.ExtendedRequest;
 import com.pki.example.data.IntermediateCARequest;
+import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
@@ -45,8 +46,8 @@ public class CAController {
     }
 
     @GetMapping("/valid-ca-aliases")
-    public ResponseEntity<List<String>> getAllValidCAAliases() throws Exception {
-        List<String> validCAAliases = certificateService.getAllValidCAAliases();
+    public ResponseEntity<List<CAWithValidityDTO>> getAllValidCAAliases() throws Exception {
+        List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases();
         return ResponseEntity.ok(validCAAliases);
     }
 

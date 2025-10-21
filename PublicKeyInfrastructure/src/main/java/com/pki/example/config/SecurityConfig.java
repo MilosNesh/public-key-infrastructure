@@ -45,6 +45,7 @@ public class SecurityConfig {
                 .antMatchers("/auth/recoverylink").permitAll()
                 //privremeno resenje
                 .antMatchers("/api/ca/**").permitAll()
+                .antMatchers("/api/csr/**").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .formLogin().loginPage("/login").permitAll().and()

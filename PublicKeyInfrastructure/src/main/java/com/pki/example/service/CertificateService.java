@@ -4,6 +4,7 @@ import com.pki.example.data.CARequest;
 import com.pki.example.data.CertificateResponse;
 import com.pki.example.data.ExtendedRequest;
 import com.pki.example.data.IntermediateCARequest;
+import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 
 import java.util.List;
@@ -32,9 +33,10 @@ public interface CertificateService {
 
     /**
      * Vraća sve alias-e CA sertifikata koji mogu da potpisuju druge sertifikate (nisu povučeni)
-     * @return Lista alias-a sertifikata koji imaju BasicConstraints CA=true i KeyUsage keyCertSign=true
+     * sa njihovim startDate i endDate
+     * @return Lista CAWithValidityDTO objekata koji sadrže alias, startDate i endDate
      */
-    List<String> getAllValidCAAliases() throws Exception;
+    List<CAWithValidityDTO> getAllValidCAAliases() throws Exception;
 
     /**
      * Vraća sve End Entity sertifikate čitajući DER fajlove iz end-entity foldera
