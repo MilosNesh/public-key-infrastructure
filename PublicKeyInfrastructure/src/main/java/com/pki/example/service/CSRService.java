@@ -7,7 +7,7 @@ import com.pki.example.dto.CsrResponseDTO;
 import java.util.List;
 
 public interface CSRService {
-    public CertificateResponse approveCSR(Long csrId, Long issuerUserId, String issuerAlias) throws Exception;
+    public CertificateResponse approveCSR(Long csrId, Long issuerUserId) throws Exception;
 
     Long saveCSR(org.springframework.web.multipart.MultipartFile file, Long userId, String issuerAlias, String startDate, String endDate) throws Exception;
 

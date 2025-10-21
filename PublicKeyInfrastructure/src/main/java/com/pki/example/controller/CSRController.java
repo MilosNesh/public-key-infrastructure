@@ -41,7 +41,7 @@ public class CSRController {
             @PathVariable Long csrId,
             @RequestParam("issuerUserId") Long issuerUserId,
             @RequestParam("issuerAlias") String issuerAlias)  throws Exception {
-        CertificateResponse response = csrService.approveCSR(csrId, issuerUserId, issuerAlias);
+        CertificateResponse response = csrService.approveCSR(csrId, 1L);
         return ResponseEntity.ok(response);
     }
 
