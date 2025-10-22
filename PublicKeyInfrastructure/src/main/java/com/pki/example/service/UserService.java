@@ -14,4 +14,5 @@ public interface UserService {
     boolean login(LoginDetailsDTO loginDetailsDTO);
     boolean resetPassword(RecoveryDataDTO recoveryDataDTO, String token);
     List<String> getEmails(String email);
+    User saveCAUser(User user);
 }

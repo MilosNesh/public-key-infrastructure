@@ -100,4 +100,33 @@ public class MailServiceImpl implements MailService {
         System.out.println("HTML Email poslat!");
     }
 
+    @Override
+    public void sendPasswordNotificationAsync(User user) throws MailException, MessagingException {
+        MimeMessage message = javaMailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true); // true = HTML
+
+        helper.setTo(user.getEmail());
+        helper.setFrom(env.getProperty("spring.mail.username"));
+        helper.setSubject("Public Key Infrastructure - Password");
+
+        String htmlContent = "<html>" +
+                "<body style='font-family: Arial, sans-serif;'>" +
+                "<div style='max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;'>" +
+
+                "<h2 style='color: #2c3e50;'>Hi " + user.getName() + " " + user.getSurname() + ",</h2>" +
+                "<p style='font-size: 16px;'>.</p>" +
+                "<p style='font-size: 16px;'>Here is your password: "+user.getPassword()+"</p>" +
+
+                "<p style='margin-top: 40px; font-size: 12px; color: #999;'>Please change your password the first time you log in.</p>" +
+
+                "</div>" +
+                "</body>" +
+                "</html>";
+
+        helper.setText(htmlContent, true);
+
+        javaMailSender.send(message);
+        System.out.println("HTML Email poslat!");
+    }
+
 }

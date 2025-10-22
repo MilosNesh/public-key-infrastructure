@@ -2,6 +2,7 @@ package com.pki.example.controller;
 
 import com.pki.example.data.User;
 import com.pki.example.dto.LoginDetailsDTO;
+import com.pki.example.dto.LoginResponseDTO;
 import com.pki.example.dto.RecoveryDataDTO;
 import com.pki.example.dto.UserDTO;
 import com.pki.example.security.Captcha;
@@ -21,6 +22,7 @@ import org.springframework.http.MediaType;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.util.Map;
 
 @RestController
 @RequestMapping(value = "/auth", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -84,18 +86,18 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> login(
+    public ResponseEntity<?> login(
             @RequestBody LoginDetailsDTO authenticationRequest, HttpServletResponse response) {
 
         User userByEmail = userService.getByEmail(authenticationRequest.getEmail());
         if (userByEmail == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "User not found"));
         }
         if (userByEmail.getActivationToken()!=null) {
-            return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).body("Account has not been activated");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "Account has not been activated"));
         }
         if (!userService.login(authenticationRequest))
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid email or password");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "Invalid password"));
 
         boolean captchaOk = captcha.verifyCaptcha(authenticationRequest.getCaptcha());
         if (!captchaOk) {
@@ -106,12 +108,9 @@ public class AuthController {
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        User user = (User) authentication.getPrincipal();
         String jwt = tokenUtils.generateToken(userByEmail);
-//        int expiresIn = tokenUtils.getExpiredIn();
 
-        // Vrati token kao odgovor na uspesnu autentifikaciju
-        return ResponseEntity.ok(jwt);
+        return ResponseEntity.ok(new LoginResponseDTO(jwt, userByEmail.getMustChangePassword()));
     }
 
     @PostMapping("/recoverylink")
@@ -132,20 +131,8 @@ public class AuthController {
     public ResponseEntity<String> recover(@RequestBody RecoveryDataDTO recoveryDataDTO, HttpServletRequest request) {
         boolean isReset = userService.resetPassword(recoveryDataDTO, tokenUtils.getToken(request));
         if(!isReset)
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("You do not have permission to reset password.");
         return ResponseEntity.ok("");
-    }
-
-    @GetMapping("/test")
-    @PreAuthorize("hasRole('USER')")
-    public ResponseEntity<String> test() {
-        return ResponseEntity.ok("Radi");
-    }
-
-    @GetMapping("/test2")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<String> test2() {
-        return ResponseEntity.ok("Radi admin");
     }
 
 }
