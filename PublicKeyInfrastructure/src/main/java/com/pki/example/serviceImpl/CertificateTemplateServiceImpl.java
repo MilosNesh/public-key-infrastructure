@@ -49,7 +49,6 @@ public class CertificateTemplateServiceImpl implements CertificateTemplateServic
         CertificateTemplate template = CertificateTemplate.builder()
                 .userId(userId)
                 .name(requestDTO.getName())
-                .label(requestDTO.getLabel())
                 .issuerAlias(requestDTO.getIssuerAlias())
                 .commonNameRegex(requestDTO.getCommonNameRegex())
                 .sanRegex(requestDTO.getSanRegex())
@@ -99,7 +98,7 @@ public class CertificateTemplateServiceImpl implements CertificateTemplateServic
     public List<TemplateDropdownDTO> getTemplatesForUserDropdown(Long userId) {
         return templateRepository.findByUserId(userId).stream()
                 .filter(CertificateTemplate::getEnabled) // Samo aktivni template-i
-                .map(template -> new TemplateDropdownDTO(template.getId(), template.getLabel()))
+                .map(template -> new TemplateDropdownDTO(template.getId(), template.getName()))
                 .collect(Collectors.toList());
     }
 
@@ -111,7 +110,6 @@ public class CertificateTemplateServiceImpl implements CertificateTemplateServic
                 .id(template.getId())
                 .userId(template.getUserId())
                 .name(template.getName())
-                .label(template.getLabel())
                 .issuerAlias(template.getIssuerAlias())
                 .commonNameRegex(template.getCommonNameRegex())
                 .sanRegex(template.getSanRegex())
