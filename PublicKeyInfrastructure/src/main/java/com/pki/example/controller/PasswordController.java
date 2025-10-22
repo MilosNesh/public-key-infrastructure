@@ -76,10 +76,15 @@ public class PasswordController {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         if(user == null)
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        PublicKey publicKey =  publicKeyService.findByUserId(user.getId());
-        if(publicKey == null)
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-        return ResponseEntity.ok(publicKey.getKey());
+//        PublicKey publicKey =  publicKeyService.findByUserId(user.getId());
+//        if(publicKey == null)
+//            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+//
+//        return ResponseEntity.ok(publicKey.getKey());
+        String key = publicKeyService.getByUserEmail(user.getEmail());
+        if(key.isEmpty())
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        return ResponseEntity.ok(key);
     }
 
     @PostMapping("/save-shared-password")
@@ -102,9 +107,13 @@ public class PasswordController {
     @GetMapping("/load-key/{email}")
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> getPublicKeyByEmail(@PathVariable String email) {
-        PublicKey publicKey =  publicKeyService.findByUserEmail(email);
-        if(publicKey == null)
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-        return ResponseEntity.ok(publicKey.getKey());
+//        PublicKey publicKey =  publicKeyService.findByUserEmail(email);
+//        if(publicKey == null)
+//            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+//        return ResponseEntity.ok(publicKey.getKey());
+        String key = publicKeyService.getByUserEmail(email);
+        if(key.isEmpty())
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        return ResponseEntity.ok(key);
     }
 }

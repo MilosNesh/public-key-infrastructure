@@ -6,4 +6,5 @@ public interface PublicKeyService {
     PublicKey save(PublicKey publicKey);
     PublicKey findByUserId(Long userId);
     PublicKey findByUserEmail(String email);
+    String getByUserEmail(String email);
 }
