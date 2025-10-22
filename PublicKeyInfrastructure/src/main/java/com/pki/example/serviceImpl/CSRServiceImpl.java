@@ -105,7 +105,7 @@ public class CSRServiceImpl implements CSRService {
                 
                 // Dekriptuj lozinku pre korišćenja
                 char[] decryptedPassword = certificateService.decryptKeystorePasswordIfNeeded(
-                        uc.getKeystorePath(), uc.getKeystorePassword());
+                        uc.getKeystorePath(), uc.getKeystorePassword(), issuerUserId);
                 ks.load(fis, decryptedPassword);
 
                 if (ks.containsAlias(issuerAlias)) {
@@ -124,7 +124,8 @@ public class CSRServiceImpl implements CSRService {
 
         char[] ksPwd = certificateService.decryptKeystorePasswordIfNeeded(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword());
+                matchingCertificate.getKeystorePassword(),
+                issuerUserId);
 
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
                 matchingCertificate.getKeystorePath(),

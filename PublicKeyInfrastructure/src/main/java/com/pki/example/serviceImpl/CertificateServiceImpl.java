@@ -90,7 +90,7 @@ public class CertificateServiceImpl implements CertificateService {
         return KeyStore.getInstance("JKS");
     }
 
-    public char[] decryptKeystorePasswordIfNeeded(String keystorePath, String tokenOrPlain) throws Exception {
+    public char[] decryptKeystorePasswordIfNeeded(String keystorePath, String tokenOrPlain, Long userId) throws Exception {
         if (tokenOrPlain == null) return null;
         if (!tokenOrPlain.startsWith("v1:")) {
             return tokenOrPlain.toCharArray();
@@ -102,7 +102,7 @@ public class CertificateServiceImpl implements CertificateService {
         byte[] iv = Base64.getDecoder().decode(parts[1]);
         byte[] ct = Base64.getDecoder().decode(parts[2]);
 
-        SecretKey kek = kekService.getOrCreateKek(1L);
+        SecretKey kek = kekService.getOrCreateKek(userId);
         byte[] aad = ("keystore:" + aliasFromKeystorePath(keystorePath)).getBytes(StandardCharsets.UTF_8);
 
         byte[] pt = aesGcmService.decryptBytesWithKey(kek, iv, ct, aad);
@@ -112,17 +112,17 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public ExtendedCAResponseDTO createRootCA(ExtendedRequest request) throws Exception {
+    public ExtendedCAResponseDTO createRootCA(ExtendedRequest request, Long userId) throws Exception {
 
         System.out.println("Issuerrrr: " + request.getIssuerAlias());
 
         if (request.getIsCA() != null && !request.getIsCA()) {
             System.out.println("Kreiranje End Entity sertifikata (isCA = false)");
-            return createEndEntityCertificate(request);
+            return createEndEntityCertificate(request, userId);
         }
 
         if (request.getIssuerAlias() != null && !request.getIssuerAlias().trim().isEmpty()) {
-            return createIntermediateCAFromExtendedRequest(request);
+            return createIntermediateCAFromExtendedRequest(request, userId);
         }
 
         KeyPair keyPair = generateKeyPair();
@@ -173,7 +173,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.write(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), rootCA);
         keyStoreWriter.saveKeyStore(keystorePath, keyStorePassword.toCharArray());
 
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
 
         SecretKey kek = kekService.getOrCreateKek(user.getId());
@@ -230,7 +230,7 @@ public class CertificateServiceImpl implements CertificateService {
             try (FileInputStream fis = new FileInputStream(path)) {
                 KeyStore ks = newKeyStoreForPath(path);
 
-                char[] decryptedPassword = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword());
+                char[] decryptedPassword = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword(), issuerUserId);
                 ks.load(fis, decryptedPassword);
                 java.util.Arrays.fill(decryptedPassword, '\0');
 
@@ -251,7 +251,8 @@ public class CertificateServiceImpl implements CertificateService {
         // 2. Učitavanje issuer sertifikata
         char[] matchingPwd = decryptKeystorePasswordIfNeeded(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword()
+                matchingCertificate.getKeystorePassword(),
+                issuerUserId
         );
         String matchingPwdStr = matchingPwd == null ? null : new String(matchingPwd);
 
@@ -363,7 +364,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.writeChain(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), chain);
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(issuerUserId)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
 
         SecretKey kek = kekService.getOrCreateKek(user.getId());
@@ -428,7 +429,7 @@ public class CertificateServiceImpl implements CertificateService {
         return chain;
     }
 
-    private String findAliasForCertificateId(String keystorePath, String password, Long certificateId) {
+    private String findAliasForCertificateId(String keystorePath, String password, Long certificateId, Long userId) {
         if (!isKeystorePath(keystorePath)) {
             // DER/CRT — nema aliasa
             return null;
@@ -436,7 +437,7 @@ public class CertificateServiceImpl implements CertificateService {
         try (FileInputStream fis = new FileInputStream(keystorePath)) {
             KeyStore ks = newKeyStoreForPath(keystorePath);
 
-            char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password);
+            char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password, userId);
             ks.load(fis, ksPwd);
             if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
 
@@ -481,7 +482,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public List<ExtendedCAResponseDTO> getAll() throws Exception {
+    public List<ExtendedCAResponseDTO> getAll(Long userId) throws Exception {
         List<ExtendedCAResponseDTO> result = new ArrayList<>();
         Set<String> seenSerialNumbers = new HashSet<>();
 
@@ -513,12 +514,12 @@ public class CertificateServiceImpl implements CertificateService {
                 }
 
                 if (isKeystorePath(path)) {
-                    String alias = findAliasForCertificateId(path, pwdToken, userCert.getCertificateId());
+                    String alias = findAliasForCertificateId(path, pwdToken, userCert.getCertificateId(), userId);
                     if (alias == null) {
                         continue;
                     }
 
-                    char[] ksPwd = decryptKeystorePasswordIfNeeded(path, pwdToken);
+                    char[] ksPwd = decryptKeystorePasswordIfNeeded(path, pwdToken, userId);
                     try {
                         X509Certificate[] chain = keyStoreReader.readChain(path, ksPwd, alias);
 
@@ -565,7 +566,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public List<CAWithValidityDTO> getAllValidCAAliases() throws Exception {
+    public List<CAWithValidityDTO> getAllValidCAAliases(Long userId) throws Exception {
         List<CAWithValidityDTO> validCAAliases = new ArrayList<>();
 
         System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
@@ -579,12 +580,12 @@ public class CertificateServiceImpl implements CertificateService {
 
                 if (!isKeystorePath(path)) continue;
 
-                String alias = findAliasForCertificateId(path, password, userCert.getCertificateId());
+                String alias = findAliasForCertificateId(path, password, userCert.getCertificateId(), userCert.getUser().getId());
                 if (alias == null) continue;
 
                 System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + path);
 
-                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, password);
+                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, password, userCert.getUser().getId());
                 try {
                     X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(
                             path,
@@ -618,7 +619,7 @@ public class CertificateServiceImpl implements CertificateService {
     }
 
     @Override
-    public List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception {
+    public List<ExtendedCAResponseDTO> getAllEndEntity(Long userId) throws Exception {
         List<ExtendedCAResponseDTO> result = new ArrayList<>();
 
         System.out.println("Tražim sve End Entity sertifikate iz end-entity foldera...");
@@ -770,8 +771,7 @@ public class CertificateServiceImpl implements CertificateService {
         return response;
     }
 
-    private ExtendedCAResponseDTO createIntermediateCAFromExtendedRequest(ExtendedRequest request) throws Exception {
-        Long issuerUserId = 1L;
+    private ExtendedCAResponseDTO createIntermediateCAFromExtendedRequest(ExtendedRequest request, Long issuerUserId) throws Exception {
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
         if (userCertificates.isEmpty()) {
@@ -791,7 +791,7 @@ public class CertificateServiceImpl implements CertificateService {
             System.out.println("Proveravam UserCertificate ID: " + uc.getId() + ", keystore: " + path);
             try (FileInputStream fis = new FileInputStream(path)) {
                 KeyStore ks = newKeyStoreForPath(path);
-                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword());
+                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword(), issuerUserId);
                 ks.load(fis, ksPwd);
 
                 Enumeration<String> aliases = ks.aliases();
@@ -821,7 +821,11 @@ public class CertificateServiceImpl implements CertificateService {
             throw new Exception("Sertifikat sa aliasom '" + aliasToFind + "' nije pronađen ni u jednom keystore-u korisnika!");
         }
 
-        char[] matchingPwd = decryptKeystorePasswordIfNeeded(matchingCertificate.getKeystorePath(), matchingCertificate.getKeystorePassword());
+        char[] matchingPwd = decryptKeystorePasswordIfNeeded(
+                matchingCertificate.getKeystorePath(),
+                matchingCertificate.getKeystorePassword(),
+                issuerUserId
+        );
         String matchingPwdStr = matchingPwd != null ? new String(matchingPwd) : null;
 
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
@@ -906,7 +910,7 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.writeChain(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), chain);
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(issuerUserId)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
 
         SecretKey kek = kekService.getOrCreateKek(user.getId());
@@ -1048,7 +1052,7 @@ public class CertificateServiceImpl implements CertificateService {
         return null;
     }
 
-    private ExtendedCAResponseDTO createEndEntityCertificate(ExtendedRequest request) throws Exception {
+    private ExtendedCAResponseDTO createEndEntityCertificate(ExtendedRequest request, Long userId) throws Exception {
         System.out.println("=== KREIRANJE END ENTITY SERTIFIKATA ===");
 
         KeyPair keyPair = generateKeyPair();
@@ -1070,7 +1074,7 @@ public class CertificateServiceImpl implements CertificateService {
 
         Subject subject = new Subject(keyPair.getPublic(), builder.build());
 
-        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(1L);
+        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(userId);
         if (userCertificates.isEmpty()) {
             throw new Exception("Nema dostupnih CA sertifikata za potpisivanje End Entity sertifikata!");
         }
@@ -1082,10 +1086,10 @@ public class CertificateServiceImpl implements CertificateService {
                 if (!isKeystorePath(keystorePath)) continue;
 
                 String password = uc.getKeystorePassword();
-                String alias = findAliasForCertificateId(keystorePath, password, uc.getCertificateId());
+                String alias = findAliasForCertificateId(keystorePath, password, uc.getCertificateId(), userId);
 
                 if (alias != null) {
-                    char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password);
+                    char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password, userId);
                     X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, ksPwd != null ? new String(ksPwd) : null, alias);
                     if (isValidCASigner(cert)) {
                         caCertificate = uc;
@@ -1106,7 +1110,8 @@ public class CertificateServiceImpl implements CertificateService {
 
         String caAlias = findAliasForCertificateId(caCertificate.getKeystorePath(),
                 caCertificate.getKeystorePassword(),
-                caCertificate.getCertificateId());
+                caCertificate.getCertificateId(),
+                userId);
 
         if (caAlias == null) {
             throw new Exception("Ne mogu da pronađem alias za CA sertifikat!");
@@ -1114,7 +1119,8 @@ public class CertificateServiceImpl implements CertificateService {
 
         char[] caPwd = decryptKeystorePasswordIfNeeded(
                 caCertificate.getKeystorePath(),
-                caCertificate.getKeystorePassword()
+                caCertificate.getKeystorePassword(),
+                userId
         );
         String caPwdStr = caPwd != null ? new String(caPwd) : null;
 
@@ -1172,7 +1178,7 @@ public class CertificateServiceImpl implements CertificateService {
 
         System.out.println("End Entity sertifikat sačuvan u: " + certPath);
 
-        User user = userRepository.findById(1L)
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
 
         UserCertificate userCertificate = new UserCertificate(

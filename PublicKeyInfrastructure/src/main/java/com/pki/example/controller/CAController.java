@@ -30,7 +30,8 @@ public class CAController {
     public ResponseEntity<ExtendedCAResponseDTO> createRootCA(
             @RequestBody ExtendedRequest request) throws Exception {
         // Koristi NOVI servis (čuva lozinke u bazi)
-        ExtendedCAResponseDTO response = certificateService.createRootCA(request);
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        ExtendedCAResponseDTO response = certificateService.createRootCA(request, user.getId());
         return ResponseEntity.ok(response);
     }
 
@@ -48,21 +49,24 @@ public class CAController {
     @GetMapping("/all")
     @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAll() throws Exception {
-        List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll();
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll(user.getId());
         return ResponseEntity.ok(allCertificates);
     }
 
     @GetMapping("/valid-ca-aliases")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'CAUSER')")
     public ResponseEntity<List<CAWithValidityDTO>> getAllValidCAAliases() throws Exception {
-        List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases();
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases(user.getId());
         return ResponseEntity.ok(validCAAliases);
     }
 
     @GetMapping("/end-entity")
     @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'CAUSER')")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAllEndEntity() throws Exception {
-        List<ExtendedCAResponseDTO> endEntityCertificates = certificateService.getAllEndEntity();
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<ExtendedCAResponseDTO> endEntityCertificates = certificateService.getAllEndEntity(user.getId());
         return ResponseEntity.ok(endEntityCertificates);
     }
 
