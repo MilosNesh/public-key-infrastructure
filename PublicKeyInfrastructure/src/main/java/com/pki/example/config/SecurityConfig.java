@@ -46,6 +46,7 @@ public class SecurityConfig {
                 //privremeno resenje
                 .antMatchers("/api/ca/**").permitAll()
                 .antMatchers("/api/csr/**").permitAll()
+                .antMatchers("/api/templates/**").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .formLogin().loginPage("/login").permitAll().and()

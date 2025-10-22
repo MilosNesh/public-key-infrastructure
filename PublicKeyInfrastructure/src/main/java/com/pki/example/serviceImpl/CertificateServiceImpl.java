@@ -6,7 +6,7 @@ import com.pki.example.domain.UserCertificate;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
-import com.pki.example.repo.UserCertificateRepository;
+import com.pki.example.repository.UserCertificateRepository;
 import com.pki.example.repository.UserRepository;
 import com.pki.example.service.CertificateService;
 import com.pki.example.service.KekService;

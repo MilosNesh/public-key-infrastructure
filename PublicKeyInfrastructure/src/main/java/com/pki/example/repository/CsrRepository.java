@@ -1,4 +1,4 @@
-package com.pki.example.repo;
+package com.pki.example.repository;
 
 import com.pki.example.domain.CsrRequest;
 import org.springframework.data.jpa.repository.JpaRepository;
