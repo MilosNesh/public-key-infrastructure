@@ -1,5 +1,7 @@
 package com.pki.example.controller;
 
+import com.pki.example.data.SessionInfo;
+import com.pki.example.data.SessionStore;
 import com.pki.example.data.User;
 import com.pki.example.dto.LoginDetailsDTO;
 import com.pki.example.dto.LoginResponseDTO;
@@ -8,6 +10,7 @@ import com.pki.example.dto.UserDTO;
 import com.pki.example.security.Captcha;
 import com.pki.example.service.MailService;
 import com.pki.example.service.UserService;
+import com.pki.example.util.ClientInfo;
 import com.pki.example.util.TokenUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -22,7 +25,9 @@ import org.springframework.http.MediaType;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping(value = "/auth", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -37,6 +42,10 @@ public class AuthController {
     private MailService mailService;
     @Autowired
     private AuthenticationManager authenticationManager;
+    @Autowired
+    private SessionStore sessionStore;
+    @Autowired
+    private ClientInfo clientInfo;
 
 
     @PostMapping("/register")
@@ -87,7 +96,7 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<?> login(
-            @RequestBody LoginDetailsDTO authenticationRequest, HttpServletResponse response) {
+            @RequestBody LoginDetailsDTO authenticationRequest, HttpServletRequest request, HttpServletResponse response) {
 
         User userByEmail = userService.getByEmail(authenticationRequest.getEmail());
         if (userByEmail == null) {
@@ -105,11 +114,31 @@ public class AuthController {
         }
         Authentication authentication = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
                 authenticationRequest.getEmail(), authenticationRequest.getPassword()));
-
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        String jwt = tokenUtils.generateToken(userByEmail);
+        String sid = UUID.randomUUID().toString();
 
+        String ua = request.getHeader("User-Agent");
+        String ip = clientInfo.extractIp(request);
+        ClientInfo.ParsedUA parsed = clientInfo.parseUA(ua);
+
+        var now = Instant.now();
+        SessionInfo si = SessionInfo.builder()
+                .userId(userByEmail.getEmail())
+                .sid(sid)
+                .ip(ip)
+                .userAgent(ua)
+                .deviceType(parsed.deviceType())
+                .os(parsed.os())
+                .browser(parsed.browser())
+                .createdAt(now)
+                .lastActivityAt(now)
+                .revoked(false)
+                .expiresAt(null)
+                .build();
+        sessionStore.save(si);
+
+        String jwt = tokenUtils.generateToken(userByEmail, sid);
         return ResponseEntity.ok(new LoginResponseDTO(jwt, userByEmail.getMustChangePassword()));
     }
 
