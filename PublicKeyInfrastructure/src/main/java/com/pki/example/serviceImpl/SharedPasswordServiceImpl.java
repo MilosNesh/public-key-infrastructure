@@ -11,6 +11,8 @@ import com.pki.example.service.SharedPasswordService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.sql.Date;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,6 +32,8 @@ public class SharedPasswordServiceImpl implements SharedPasswordService {
         SharedPassword sharedPassword = new SharedPassword(password.getId(), passwordDTO.getPassword(), user.getId());
         if(!sharedPassword.isValid())
             return null;
+        sharedPassword.setCreatedAt(LocalDateTime.now());
+        sharedPassword.setCreatedBy(ownerId);
         return sharedPasswordRepository.save(sharedPassword);
     }
 

@@ -5,6 +5,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import javax.persistence.*;
+import java.sql.Date;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -24,6 +26,12 @@ public class SharedPassword {
 
     @Column(name = "userId")
     private Long userId;
+
+    @Column(name = "createdAt")
+    private LocalDateTime createdAt;
+
+    @Column(name = "createdBy")
+    private Long createdBy;
 
     public SharedPassword(Long passwordId, String password, Long userId) {
         this.password = password;
