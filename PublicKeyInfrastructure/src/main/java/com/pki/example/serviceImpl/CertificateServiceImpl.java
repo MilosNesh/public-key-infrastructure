@@ -89,7 +89,7 @@ public class CertificateServiceImpl implements CertificateService {
         return KeyStore.getInstance("JKS");
     }
 
-    private char[] decryptKeystorePasswordIfNeeded(String keystorePath, String tokenOrPlain) throws Exception {
+    public char[] decryptKeystorePasswordIfNeeded(String keystorePath, String tokenOrPlain) throws Exception {
         if (tokenOrPlain == null) return null;
         if (!tokenOrPlain.startsWith("v1:")) {
             return tokenOrPlain.toCharArray();
@@ -562,6 +562,7 @@ public class CertificateServiceImpl implements CertificateService {
         System.out.println("Ukupno pronađeno sertifikata: " + result.size());
         return result;
     }
+
     @Override
     public List<CAWithValidityDTO> getAllValidCAAliases() throws Exception {
         List<CAWithValidityDTO> validCAAliases = new ArrayList<>();
@@ -596,7 +597,7 @@ public class CertificateServiceImpl implements CertificateService {
                                 cert.getNotAfter()
                         );
                         validCAAliases.add(caDto);
-                        System.out.println("✓ Dodao validni CA alias: " + alias + " sa datumima: " + 
+                        System.out.println("✓ Dodao validni CA alias: " + alias + " sa datumima: " +
                                 cert.getNotBefore() + " - " + cert.getNotAfter());
                     } else {
                         System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);

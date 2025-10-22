@@ -68,6 +68,8 @@ public class CSRServiceImpl implements CSRService {
     @Autowired
     private UserCertificateRepository userCertificateRepository;
 
+    @Autowired
+    private CertificateServiceImpl certificateService;
 
     @Override
     public CertificateResponse approveCSR(Long csrId, Long issuerUserId) throws Exception{
@@ -96,7 +98,11 @@ public class CSRServiceImpl implements CSRService {
         for (UserCertificate uc : userCertificates) {
             try (FileInputStream fis = new FileInputStream(uc.getKeystorePath())) {
                 KeyStore ks = KeyStore.getInstance("JKS");
-                ks.load(fis, uc.getKeystorePassword().toCharArray());
+                
+                // Dekriptuj lozinku pre korišćenja
+                char[] decryptedPassword = certificateService.decryptKeystorePasswordIfNeeded(
+                        uc.getKeystorePath(), uc.getKeystorePassword());
+                ks.load(fis, decryptedPassword);
 
                 if (ks.containsAlias(issuerAlias)) {
                     matchingCertificate = uc;
@@ -108,17 +114,25 @@ public class CSRServiceImpl implements CSRService {
             }
         }
 
+        if (matchingCertificate == null) {
+            throw new Exception("Nije pronađen odgovarajući CA sertifikat sa alias-om: " + issuerAlias);
+        }
+
+        char[] ksPwd = certificateService.decryptKeystorePasswordIfNeeded(
+                matchingCertificate.getKeystorePath(),
+                matchingCertificate.getKeystorePassword());
+
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword(),
+                ksPwd != null ? new String(ksPwd) : null,
                 issuerAlias
         );
 
         Issuer issuer = keyStoreReader.readIssuerFromStore(
                 matchingCertificate.getKeystorePath(),
                 issuerAlias,
-                matchingCertificate.getKeystorePassword().toCharArray(),
-                matchingCertificate.getKeystorePassword().toCharArray()
+                ksPwd != null ? ksPwd : null,
+                ksPwd != null ? ksPwd : null
         );
 
         // 3) Koristi datume iz CSR request-a ako postoje, inače koristi default vrednosti
