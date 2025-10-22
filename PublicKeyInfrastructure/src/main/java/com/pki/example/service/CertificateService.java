@@ -36,7 +36,7 @@ public interface CertificateService {
      * sa njihovim startDate i endDate
      * @return Lista CAWithValidityDTO objekata koji sadrže alias, startDate i endDate
      */
-    List<CAWithValidityDTO> getAllValidCAAliases() throws Exception;
+//    List<CAWithValidityDTO> getAllValidCAAliases() throws Exception;
 
     /**
      * Vraća sve End Entity sertifikate čitajući DER fajlove iz end-entity foldera

@@ -3,13 +3,13 @@ package com.pki.example.serviceImpl;
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.*;
 import com.pki.example.domain.UserCertificate;
-import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
 import com.pki.example.repo.UserCertificateRepository;
 import com.pki.example.repository.UserRepository;
 import com.pki.example.service.CertificateService;
+import com.pki.example.service.KekService;
 import com.pki.example.util.CertificateUtils;
 import com.pki.example.util.PasswordGenerator;
 import com.pki.example.util.SerialNumberUtil;
@@ -19,10 +19,11 @@ import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import javax.crypto.SecretKey;
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,15 +32,9 @@ import java.security.*;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.security.KeyStore;
-import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class CertificateServiceImpl implements CertificateService {
@@ -62,28 +57,74 @@ public class CertificateServiceImpl implements CertificateService {
     @Autowired
     private CertificateValidator validator;
 
+    @Autowired
+    private KekService kekService;
+
+    @Autowired
+    private AesGcmService aesGcmService;
+
+    private String aliasFromKeystorePath(String keystorePath) {
+        if (keystorePath == null) return null;
+        String fileName = Paths.get(keystorePath).getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        return dot > 0 ? fileName.substring(0, dot) : fileName;
+    }
+
+    private boolean isKeystorePath(String p) {
+        if (p == null) return false;
+        String s = p.toLowerCase(Locale.ROOT);
+        return s.endsWith(".jks") || s.endsWith(".p12") || s.endsWith(".pfx");
+    }
+
+    private boolean isDerPath(String p) {
+        if (p == null) return false;
+        String s = p.toLowerCase(Locale.ROOT);
+        return s.endsWith(".der") || s.endsWith(".cer") || s.endsWith(".crt");
+    }
+
+    private KeyStore newKeyStoreForPath(String p) throws KeyStoreException {
+        String s = p.toLowerCase(Locale.ROOT);
+        if (s.endsWith(".p12") || s.endsWith(".pfx")) return KeyStore.getInstance("PKCS12");
+        return KeyStore.getInstance("JKS");
+    }
+
+    private char[] decryptKeystorePasswordIfNeeded(String keystorePath, String tokenOrPlain) throws Exception {
+        if (tokenOrPlain == null) return null;
+        if (!tokenOrPlain.startsWith("v1:")) {
+            return tokenOrPlain.toCharArray();
+        }
+        String[] parts = tokenOrPlain.split(":");
+        if (parts.length != 3) {
+            throw new IllegalStateException("Invalid v1 token format for keystore password.");
+        }
+        byte[] iv = Base64.getDecoder().decode(parts[1]);
+        byte[] ct = Base64.getDecoder().decode(parts[2]);
+
+        SecretKey kek = kekService.getOrCreateKek(1L);
+        byte[] aad = ("keystore:" + aliasFromKeystorePath(keystorePath)).getBytes(StandardCharsets.UTF_8);
+
+        byte[] pt = aesGcmService.decryptBytesWithKey(kek, iv, ct, aad);
+        char[] pwd = new String(pt, StandardCharsets.UTF_8).toCharArray();
+        java.util.Arrays.fill(pt, (byte) 0);
+        return pwd;
+    }
+
     @Override
     public ExtendedCAResponseDTO createRootCA(ExtendedRequest request) throws Exception {
 
         System.out.println("Issuerrrr: " + request.getIssuerAlias());
-        
-        // Proveri da li je End Entity sertifikat (isCA = false)
+
         if (request.getIsCA() != null && !request.getIsCA()) {
             System.out.println("Kreiranje End Entity sertifikata (isCA = false)");
             return createEndEntityCertificate(request);
         }
-        
-        // Proveri da li je Intermediate CA (ima issuerAlias) ili Root CA
+
         if (request.getIssuerAlias() != null && !request.getIssuerAlias().trim().isEmpty()) {
-            // Ovo je Intermediate CA - pozovi logiku za Intermediate CA
             return createIntermediateCAFromExtendedRequest(request);
         }
-        
-        // Root CA logika - self-signed
-        // 1. Generisanje RSA ključeva
+
         KeyPair keyPair = generateKeyPair();
 
-        // 2. Kreiranje X500Name za CA
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
         builder.addRDN(BCStyle.CN, request.getCommonName());
         builder.addRDN(BCStyle.O, request.getOrganization());
@@ -91,27 +132,23 @@ public class CertificateServiceImpl implements CertificateService {
         builder.addRDN(BCStyle.C, request.getCountry());
         builder.addRDN(BCStyle.E, request.getEmail());
 
-        // 3. Kreiranje Issuer objekta (Root CA potpisuje sam sebe)
         Issuer issuer = new Issuer(
                 keyPair.getPrivate(),
                 keyPair.getPublic(),
                 builder.build()
         );
 
-        // Konvertovanje LocalDate u Date
-        Date startDate = request.getStartDate() != null 
-            ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date();
-        Date endDate = request.getEndDate() != null 
-            ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000)); // +1 godina default
+        Date startDate = request.getStartDate() != null
+                ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date();
+        Date endDate = request.getEndDate() != null
+                ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000));
 
-        // Koristimo serialNumber iz request-a ili generišemo novi
         String serialNumber = (request.getSerialNumber() != null && !request.getSerialNumber().trim().isEmpty())
-            ? request.getSerialNumber()
-            : SerialNumberUtil.generateSerial(32).toString();
-        
-        // 4. Generisanje Root CA sertifikata
+                ? request.getSerialNumber()
+                : SerialNumberUtil.generateSerial(32).toString();
+
         X509Certificate rootCA = caCertificateGenerator.generateRootCACertificate(
                 issuer,
                 startDate,
@@ -124,34 +161,41 @@ public class CertificateServiceImpl implements CertificateService {
                 request.getAdditionalExtensions()
         );
 
-        // 5. Generisanje random lozinke za keystore
         String keyStorePassword = PasswordGenerator.generatePassword(20);
 
-        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
+        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase(Locale.ROOT);
         String keystoreName = alias;
         String keystorePath = "src/main/resources/static/" + keystoreName + ".jks";
 
-        keyStoreWriter.loadKeyStore(null, keyStorePassword.toCharArray()); // novi keystore
+        keyStoreWriter.loadKeyStore(null, keyStorePassword.toCharArray());
         keyStoreWriter.write(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), rootCA);
         keyStoreWriter.saveKeyStore(keystorePath, keyStorePassword.toCharArray());
 
-
-        // 8. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
         User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
-        
+
+        SecretKey kek = kekService.getOrCreateKek(user.getId());
+        byte[] aad = ("keystore:" + aliasFromKeystorePath(keystorePath)).getBytes(StandardCharsets.UTF_8);
+
+        AesGcmService.EncBlob blob = aesGcmService.encryptBytesWithKey(
+                kek,
+                keyStorePassword.getBytes(StandardCharsets.UTF_8),
+                aad
+        );
+        String encToken = "v1:" +
+                Base64.getEncoder().encodeToString(blob.getIv()) + ":" +
+                Base64.getEncoder().encodeToString(blob.getCt());
+
         UserCertificate userCertificate = new UserCertificate(
-            user,
-            Long.parseLong(serialNumber),
-            keyStorePassword,  // Plain text lozinka (TODO: šifrovati kasnije)
-            keystorePath
+                user,
+                Long.parseLong(serialNumber),
+                encToken,
+                keystorePath
         );
         userCertificateRepository.save(userCertificate);
 
-        // 9. Response - kreiranje ExtendedCAResponseDTO
         ExtendedCAResponseDTO response = createExtendedCAResponseDTO(rootCA, alias, request, null);
         response.setMessage("Root CA uspešno kreiran! Keystore: " + keystorePath);
-
         return response;
     }
 
@@ -170,8 +214,7 @@ public class CertificateServiceImpl implements CertificateService {
     public ExtendedCAResponseDTO createIntermediateCA(ExtendedRequest request, Long issuerUserId) throws Exception {
 
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
-
-        if (userCertificates.size() == 0) {
+        if (userCertificates.isEmpty()) {
             throw new Exception("Issuer not found!");
         }
 
@@ -179,82 +222,87 @@ public class CertificateServiceImpl implements CertificateService {
         UserCertificate matchingCertificate = null;
 
         for (UserCertificate uc : userCertificates) {
-            try (FileInputStream fis = new FileInputStream(uc.getKeystorePath())) {
-                KeyStore ks = KeyStore.getInstance("JKS");
-                ks.load(fis, uc.getKeystorePassword().toCharArray());
+            String path = uc.getKeystorePath();
+            if (!isKeystorePath(path)) continue; // preskoči DER/CRT kao potencijalne issuere
+
+            try (FileInputStream fis = new FileInputStream(path)) {
+                KeyStore ks = newKeyStoreForPath(path);
+
+                char[] decryptedPassword = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword());
+                ks.load(fis, decryptedPassword);
+                java.util.Arrays.fill(decryptedPassword, '\0');
 
                 if (ks.containsAlias(aliasToFind)) {
                     matchingCertificate = uc;
-                    break; // našli smo sertifikat, možemo da prekinemo
+                    break;
                 }
 
             } catch (Exception e) {
-                System.err.println("Greška pri čitanju keystore-a " + uc.getKeystorePath() + ": " + e.getMessage());
+                System.err.println("Greška pri čitanju keystore-a " + path + ": " + e.getMessage());
             }
         }
 
+        if (matchingCertificate == null) {
+            throw new Exception("Sertifikat sa aliasom '" + aliasToFind + "' nije pronađen ni u jednom keystore-u korisnika!");
+        }
+
         // 2. Učitavanje issuer sertifikata
+        char[] matchingPwd = decryptKeystorePasswordIfNeeded(
+                matchingCertificate.getKeystorePath(),
+                matchingCertificate.getKeystorePassword()
+        );
+        String matchingPwdStr = matchingPwd == null ? null : new String(matchingPwd);
+
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword(),
+                matchingPwdStr,
                 request.getIssuerAlias()
         );
 
         Issuer issuer = keyStoreReader.readIssuerFromStore(
                 matchingCertificate.getKeystorePath(),
                 request.getIssuerAlias(),
-                matchingCertificate.getKeystorePassword().toCharArray(),
-                matchingCertificate.getKeystorePassword().toCharArray()
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null,
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null
         );
 
+        if (matchingPwd != null) java.util.Arrays.fill(matchingPwd, '\0');
 
-        if (matchingCertificate == null) {
-            throw new Exception("Sertifikat sa aliasom '" + aliasToFind + "' nije pronađen ni u jednom keystore-u korisnika!");
-        }
-
-        KeyStore ks = KeyStore.getInstance("JKS");
+        KeyStore ks = newKeyStoreForPath(matchingCertificate.getKeystorePath());
         try (FileInputStream fis = new FileInputStream(matchingCertificate.getKeystorePath())) {
-            ks.load(fis, matchingCertificate.getKeystorePassword().toCharArray());
+            ks.load(fis, matchingPwdStr != null ? matchingPwdStr.toCharArray() : null);
         }
         java.security.cert.Certificate[] issuerChain = ks.getCertificateChain(request.getIssuerAlias());
 
         X509Certificate parentOrNull = null;
         if (issuerChain != null && issuerChain.length >= 2) {
-            parentOrNull = (X509Certificate) issuerChain[1]; // roditelj iznad issuer-a
-        } else {
-            // ako je issuer root (self-signed), parent može ostati null
-            parentOrNull = null;
+            parentOrNull = (X509Certificate) issuerChain[1];
         }
 
-        // PROVERA VALIDNOSTI: (umesto stare varijante)
         System.out.println("Proveravam issuer sertifikat: ");
         System.out.println("  Subject: " + issuerCert.getSubjectDN());
         System.out.println("  Issuer: " + issuerCert.getIssuerDN());
         System.out.println("  Serial: " + issuerCert.getSerialNumber());
         System.out.println("  BasicConstraints: " + issuerCert.getBasicConstraints());
         System.out.println("  KeyUsage: " + java.util.Arrays.toString(issuerCert.getKeyUsage()));
-        
+
         if (!validator.isCAValid(issuerCert, parentOrNull)) {
             throw new Exception("Issuer certificate not valid! Proverite BasicConstraints, KeyUsage ili period važenja.");
         }
 
-        // Konvertovanje LocalDate u Date
-        Date startDate = request.getStartDate() != null 
-            ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date();
-        Date endDate = request.getEndDate() != null 
-            ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000)); // +1 godina default
+        Date startDate = request.getStartDate() != null
+                ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date();
+        Date endDate = request.getEndDate() != null
+                ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000));
 
-        // PROVERA PERIODA:
         if (!validator.canIssue(issuerCert, startDate, endDate, parentOrNull)) {
             throw new Exception("Period važenja sertifikata nije validan");
         }
 
-        // 5. Generisanje ključeva za novi CA
         KeyPair keyPair = generateKeyPair();
 
-        // 6. Kreiranje X500Name za novi CA
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
         builder.addRDN(BCStyle.CN, request.getCommonName());
         builder.addRDN(BCStyle.O, request.getOrganization());
@@ -264,12 +312,10 @@ public class CertificateServiceImpl implements CertificateService {
 
         Subject subject = new Subject(keyPair.getPublic(), builder.build());
 
-        // Koristimo serialNumber iz request-a ili generišemo novi
         String serialNumber = (request.getSerialNumber() != null && !request.getSerialNumber().trim().isEmpty())
-            ? request.getSerialNumber()
-            : SerialNumberUtil.generateSerial(32).toString();
+                ? request.getSerialNumber()
+                : SerialNumberUtil.generateSerial(32).toString();
 
-        // 7. Generisanje Intermediate CA sertifikata
         X509Certificate intermediateCA = caCertificateGenerator.generateIntermediateCACertificate(
                 subject,
                 issuer,
@@ -284,37 +330,29 @@ public class CertificateServiceImpl implements CertificateService {
                 request.getAdditionalExtensions()
         );
 
-        // 8. Generisanje random lozinke za privatni ključ
-        String privateKeyPassword = PasswordGenerator.generatePassword(20);
-
         String keystorePathToUse = matchingCertificate.getKeystorePath();
-        String keyStorePassword = matchingCertificate.getKeystorePassword();
+        String keyStorePassword = matchingPwdStr;
 
         boolean issuerHasChildren = CertificateUtils.issuerHasChildren(
                 issuerCert,
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword().toCharArray()
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null
         );
 
-
         if (issuerHasChildren) {
-            // Novi keystore jer dolazi do grananja
             keyStorePassword = PasswordGenerator.generatePassword(20);
-
-            String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
-            keystorePathToUse = "src/main/resources/static/" + alias + ".jks";
+            String newAlias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase(Locale.ROOT);
+            keystorePathToUse = "src/main/resources/static/" + newAlias + ".jks";
             keyStoreWriter.loadKeyStore(null, keyStorePassword.toCharArray());
-
             keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
         } else {
-            // Nastavi u isti keystore
-            keyStoreWriter.loadKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
+            keyStoreWriter.loadKeyStore(keystorePathToUse, keyStorePassword != null ? keyStorePassword.toCharArray() : null);
         }
 
-        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
+        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase(Locale.ROOT);
         List<X509Certificate> chainList = buildCertificateChain(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword(),
+                matchingPwdStr != null ? matchingPwdStr : "",
                 request.getIssuerAlias()
         );
         chainList.add(0, intermediateCA);
@@ -323,30 +361,43 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.writeChain(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), chain);
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
-        // 10. Čuvanje lozinke za privatni ključ u bazi (za user-a sa ID=1)
         User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
+
+        SecretKey kek = kekService.getOrCreateKek(user.getId());
+        byte[] aad2 = ("keystore:" + aliasFromKeystorePath(keystorePathToUse)).getBytes(StandardCharsets.UTF_8);
+
+        AesGcmService.EncBlob blob = aesGcmService.encryptBytesWithKey(
+                kek,
+                keyStorePassword.getBytes(StandardCharsets.UTF_8),
+                aad2
+        );
+        String encToken = "v1:" +
+                Base64.getEncoder().encodeToString(blob.getIv()) + ":" +
+                Base64.getEncoder().encodeToString(blob.getCt());
+
         UserCertificate userCertificate = new UserCertificate(
                 user,
                 Long.parseLong(serialNumber),
-                keyStorePassword,
+                encToken,
                 keystorePathToUse
         );
         userCertificateRepository.save(userCertificate);
 
-        // 11. Response - kreiranje ExtendedCAResponseDTO
         ExtendedCAResponseDTO response = createExtendedCAResponseDTO(intermediateCA, alias, request, request.getIssuerAlias());
         response.setMessage("Intermediate CA uspešno kreiran i lozinka sačuvana u bazi!");
-
         return response;
     }
 
     private List<X509Certificate> buildCertificateChain(String keystorePath, String password, String alias) throws Exception {
-        List<X509Certificate> chain = new ArrayList<>();
+        if (!isKeystorePath(keystorePath)) {
+            throw new Exception("buildCertificateChain: prosleđen nije keystore fajl: " + keystorePath);
+        }
 
-        KeyStore ks = KeyStore.getInstance("JKS");
+        List<X509Certificate> chain = new ArrayList<>();
+        KeyStore ks = newKeyStoreForPath(keystorePath);
         try (FileInputStream fis = new FileInputStream(keystorePath)) {
-            ks.load(fis, password.toCharArray());
+            ks.load(fis, password != null ? password.toCharArray() : null);
         }
 
         X509Certificate cert = (X509Certificate) ks.getCertificate(alias);
@@ -357,7 +408,6 @@ public class CertificateServiceImpl implements CertificateService {
         System.out.println("Sertifikat u lancu: " + cert.getIssuerDN());
         chain.add(cert);
 
-        // Ako issuer != subject → pokušaj da nađeš roditelja u istom keystore-u
         String issuerDN = cert.getIssuerX500Principal().getName();
         String subjectDN = cert.getSubjectX500Principal().getName();
 
@@ -366,51 +416,49 @@ public class CertificateServiceImpl implements CertificateService {
             while (aliases.hasMoreElements()) {
                 String a = aliases.nextElement();
                 X509Certificate potentialParent = (X509Certificate) ks.getCertificate(a);
-                if (potentialParent.getSubjectX500Principal().getName().equals(issuerDN)) {
-                    // Rekurzivno dodaj ostatak lanca
+                if (potentialParent != null &&
+                        potentialParent.getSubjectX500Principal().getName().equals(issuerDN)) {
                     chain.addAll(buildCertificateChain(keystorePath, password, a));
                     break;
                 }
             }
         }
-
         return chain;
     }
 
-    /**
-     * Pokušava da pronađe alias za specifični certificate ID u keystore-u
-     */
     private String findAliasForCertificateId(String keystorePath, String password, Long certificateId) {
+        if (!isKeystorePath(keystorePath)) {
+            // DER/CRT — nema aliasa
+            return null;
+        }
         try (FileInputStream fis = new FileInputStream(keystorePath)) {
-            KeyStore ks = KeyStore.getInstance("JKS");
-            ks.load(fis, password.toCharArray());
-            
+            KeyStore ks = newKeyStoreForPath(keystorePath);
+
+            char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password);
+            ks.load(fis, ksPwd);
+            if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
+
             String targetSerialNumber = certificateId.toString();
             Enumeration<String> aliases = ks.aliases();
-            
+
             while (aliases.hasMoreElements()) {
                 String alias = aliases.nextElement();
-                if (ks.isKeyEntry(alias)) {
+                if (ks.isKeyEntry(alias) || ks.isCertificateEntry(alias)) {
                     try {
-                        // Proveri certificate u lancu (prvi u lancu je subject certificate)
                         java.security.cert.Certificate[] chain = ks.getCertificateChain(alias);
                         if (chain != null && chain.length > 0) {
-                            X509Certificate cert = (X509Certificate) chain[0]; // prvi u lancu
+                            X509Certificate cert = (X509Certificate) chain[0];
                             String certSerialNumber = cert.getSerialNumber().toString();
                             System.out.println("Proveravam alias: " + alias + ", serijski broj: " + certSerialNumber + ", tražim: " + targetSerialNumber);
-                            
                             if (targetSerialNumber.equals(certSerialNumber)) {
                                 System.out.println("Pronašao odgovarajući alias: " + alias);
                                 return alias;
                             }
                         }
-                        
-                        // Takođe proveri individualni certificate (fallback)
                         java.security.cert.Certificate singleCert = ks.getCertificate(alias);
                         if (singleCert instanceof X509Certificate) {
                             X509Certificate x509Cert = (X509Certificate) singleCert;
                             String certSerialNumber = x509Cert.getSerialNumber().toString();
-                            
                             if (targetSerialNumber.equals(certSerialNumber)) {
                                 System.out.println("Pronašao odgovarajući alias (individual): " + alias);
                                 return alias;
@@ -421,46 +469,12 @@ public class CertificateServiceImpl implements CertificateService {
                     }
                 }
             }
-            
             System.err.println("Nije pronađen alias za certificate ID: " + certificateId);
             return null;
-            
+
         } catch (Exception e) {
             System.err.println("Greška pri pronalaženju alias-a: " + e.getMessage());
             return null;
-        }
-    }
-    
-
-    /**
-     * Proverava da li je sertifikat intermediate sertifikat izdato od specifičnog root-a
-     */
-    private boolean isIntermediateCertificateForRoot(X509Certificate cert, String rootSubjectDN) {
-        try {
-            String certIssuerDN = cert.getIssuerDN().toString();
-            String certSubjectDN = cert.getSubjectDN().toString();
-            
-            System.out.println("Proveravam da li je intermediate:");
-            System.out.println("  Root Subject DN: " + rootSubjectDN);
-            System.out.println("  Cert Issuer DN:  " + certIssuerDN);
-            System.out.println("  Cert Subject DN: " + certSubjectDN);
-            
-            // Intermediate sertifikat mora biti izdato od root-a (issuerDN = rootSubjectDN)
-            // i ne sme biti self-signed
-            boolean issuerMatches = rootSubjectDN.equals(certIssuerDN);
-            boolean notSelfSigned = !certIssuerDN.equals(certSubjectDN);
-            
-            System.out.println("  Issuer matches root: " + issuerMatches);
-            System.out.println("  Not self-signed: " + notSelfSigned);
-            
-            boolean isIntermediateForRoot = issuerMatches && notSelfSigned;
-            System.out.println("  Is intermediate: " + isIntermediateForRoot);
-            
-            return isIntermediateForRoot;
-            
-        } catch (Exception e) {
-            System.err.println("Greška pri proveri intermediate sertifikata: " + e.getMessage());
-            return false;
         }
     }
 
@@ -468,180 +482,180 @@ public class CertificateServiceImpl implements CertificateService {
     public List<ExtendedCAResponseDTO> getAll() throws Exception {
         List<ExtendedCAResponseDTO> result = new ArrayList<>();
         Set<String> seenSerialNumbers = new HashSet<>();
-        
+
         System.out.println("Tražim sve sertifikate iz user_certificates tabele...");
-        
-        // Uzmi sve UserCertificate entitete
         List<UserCertificate> userCertificates = userCertificateRepository.findAll();
         System.out.println("Ukupno UserCertificate entiteta: " + userCertificates.size());
-        
+
         for (UserCertificate userCert : userCertificates) {
+            String path = userCert.getKeystorePath();
+            String pwdToken = userCert.getKeystorePassword();
+
             try {
-                String keystorePath = userCert.getKeystorePath();
-                String password = userCert.getKeystorePassword();
-                String alias = findAliasForCertificateId(keystorePath, password, userCert.getCertificateId());
-                
-                if (alias != null) {
-                    System.out.println("Proveravam alias: " + alias + " u keystore: " + keystorePath);
-                    
-                    // Prvo proveri lanac sertifikata
-                    X509Certificate[] chain = keyStoreReader.readChain(keystorePath, password.toCharArray(), alias);
-                    
-                    if (chain != null && chain.length > 0) {
-                        System.out.println("Lanac ima " + chain.length + " sertifikata");
-                        
-                        // Dodaj sve sertifikate iz lanca
-                        for (int i = 0; i < chain.length; i++) {
-                            X509Certificate cert = chain[i];
-                            String serialNumber = cert.getSerialNumber().toString();
-                            
-                            if (!seenSerialNumbers.contains(serialNumber)) {
-                                seenSerialNumbers.add(serialNumber);
-                                
-                                ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
-                                result.add(response);
-                                
-                                System.out.println("Dodao sertifikat " + (i + 1) + " iz lanca: " + cert.getSubjectDN());
-                            }
-                        }
-                    }
-                    
-                    // Takođe proveri individualni sertifikat (možda nije u lancu)
+                if (isDerPath(path)) {
                     try {
-                        java.security.cert.Certificate singleCert = keyStoreReader.readCertificate(keystorePath, password, alias);
-                        if (singleCert instanceof X509Certificate) {
-                            X509Certificate x509Cert = (X509Certificate) singleCert;
-                            String serialNumber = x509Cert.getSerialNumber().toString();
-                            
-                            if (!seenSerialNumbers.contains(serialNumber)) {
-                                seenSerialNumbers.add(serialNumber);
-                                
-                                ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(x509Cert, alias);
-                                result.add(response);
-                                
-                                System.out.println("Dodao individualni sertifikat: " + x509Cert.getSubjectDN());
+                        byte[] der = Files.readAllBytes(Paths.get(path));
+                        X509Certificate cert = loadCertificateFromDer(der);
+                        String serialNumber = cert.getSerialNumber().toString();
+                        if (seenSerialNumbers.add(serialNumber)) {
+                            String fileName = Paths.get(path).getFileName().toString();
+                            String alias = fileName.replaceFirst("\\.(der|cer|crt)$", "");
+                            ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
+                            response.setMessage("End Entity / pojedinačni DER: " + fileName);
+                            result.add(response);
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Greška pri čitanju DER fajla: " + path + " - " + e.getMessage());
+                    }
+                    continue;
+                }
+
+                if (isKeystorePath(path)) {
+                    String alias = findAliasForCertificateId(path, pwdToken, userCert.getCertificateId());
+                    if (alias == null) {
+                        continue;
+                    }
+
+                    char[] ksPwd = decryptKeystorePasswordIfNeeded(path, pwdToken);
+                    try {
+                        X509Certificate[] chain = keyStoreReader.readChain(path, ksPwd, alias);
+
+                        if (chain != null && chain.length > 0) {
+                            System.out.println("Lanac ima " + chain.length + " sertifikata");
+                            for (X509Certificate cert : chain) {
+                                String serialNumber = cert.getSerialNumber().toString();
+                                if (seenSerialNumbers.add(serialNumber)) {
+                                    ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
+                                    result.add(response);
+                                }
+                            }
+                        } else {
+                            java.security.cert.Certificate singleCert =
+                                    keyStoreReader.readCertificate(path, ksPwd != null ? new String(ksPwd) : null, alias);
+                            if (singleCert instanceof X509Certificate) {
+                                X509Certificate x509Cert = (X509Certificate) singleCert;
+                                String serialNumber = x509Cert.getSerialNumber().toString();
+                                if (seenSerialNumbers.add(serialNumber)) {
+                                    ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(x509Cert, alias);
+                                    result.add(response);
+                                }
                             }
                         }
                     } catch (Exception e) {
-                        System.out.println("Nema individualnog sertifikata za alias: " + alias);
+                        System.err.println("Greška pri čitanju iz keystore-a: " + path + " - " + e.getMessage());
+                    } finally {
+                        if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
                     }
+                    continue;
                 }
+
+                System.out.println("Nepoznat tip fajla (nije ni keystore ni DER): " + path);
+
             } catch (Exception e) {
-                System.err.println("Greška pri čitanju sertifikata za UserCertificate ID: " + userCert.getId() + 
-                                 ", greška: " + e.getMessage());
+                System.err.println("Greška pri čitanju sertifikata za UserCertificate ID: " + userCert.getId() +
+                        ", greška: " + e.getMessage());
                 e.printStackTrace();
             }
         }
-        
+
         System.out.println("Ukupno pronađeno sertifikata: " + result.size());
         return result;
     }
-
-    @Override
-    public List<CAWithValidityDTO> getAllValidCAAliases() throws Exception {
-        List<CAWithValidityDTO> validCAAliases = new ArrayList<>();
-        
-        System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
-        
-        // Uzmi sve UserCertificate entitete
-        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
-        System.out.println("Ukupno UserCertificate entiteta za proveru CA: " + userCertificates.size());
-        
-        for (UserCertificate userCert : userCertificates) {
-            try {
-                String keystorePath = userCert.getKeystorePath();
-                String password = userCert.getKeystorePassword();
-                String alias = findAliasForCertificateId(keystorePath, password, userCert.getCertificateId());
-                
-                if (alias != null) {
-                    System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + keystorePath);
-                    
-                    try {
-                        // Učitaj sertifikat
-                        X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, password, alias);
-                        
-                        // Proveri da li je valjan CA sertifikat
-                        if (isValidCASigner(cert)) {
-                            CAWithValidityDTO dto = new CAWithValidityDTO(
-                                alias,
-                                cert.getNotBefore(),
-                                cert.getNotAfter()
-                            );
-                            validCAAliases.add(dto);
-                            System.out.println("✓ Dodao validni CA alias: " + alias + 
-                                " (valid from " + cert.getNotBefore() + " to " + cert.getNotAfter() + ")");
-                        } else {
-                            System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
-                        }
-                        
-                    } catch (Exception e) {
-                        System.err.println("Greška pri čitanju sertifikata za alias " + alias + ": " + e.getMessage());
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("Greška pri proveri CA alias-a za UserCertificate ID: " + userCert.getId() + 
-                                 ", greška: " + e.getMessage());
-            }
-        }
-        
-        System.out.println("Ukupno pronađeno validnih CA alias-a: " + validCAAliases.size());
-        return validCAAliases;
-    }
+//
+//    @Override
+//    public List<String> getAllValidCAAliases() throws Exception {
+//        List<String> validCAAliases = new ArrayList<>();
+//
+//        System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
+//        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
+//        System.out.println("Ukupno UserCertificate entiteta za proveru CA: " + userCertificates.size());
+//
+//        for (UserCertificate userCert : userCertificates) {
+//            try {
+//                String path = userCert.getKeystorePath();
+//                String password = userCert.getKeystorePassword();
+//
+//                if (!isKeystorePath(path)) continue;
+//
+//                String alias = findAliasForCertificateId(path, password, userCert.getCertificateId());
+//                if (alias == null) continue;
+//
+//                System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + path);
+//
+//                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, password);
+//                try {
+//                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(
+//                            path,
+//                            ksPwd != null ? new String(ksPwd) : null,
+//                            alias
+//                    );
+//                    if (isValidCASigner(cert)) {
+//                        validCAAliases.add(alias);
+//                        System.out.println("✓ Dodao validni CA alias: " + alias);
+//                    } else {
+//                        System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
+//                    }
+//                } finally {
+//                    if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
+//                }
+//
+//            } catch (Exception e) {
+//                System.err.println("Greška pri proveri CA alias-a za UserCertificate ID: " + userCert.getId() +
+//                        ", greška: " + e.getMessage());
+//            }
+//        }
+//
+//        System.out.println("Ukupno pronađeno validnih CA alias-a: " + validCAAliases.size());
+//        return validCAAliases;
+//    }
 
     @Override
     public List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception {
         List<ExtendedCAResponseDTO> result = new ArrayList<>();
-        
+
         System.out.println("Tražim sve End Entity sertifikate iz end-entity foldera...");
-        
+
         try {
             Path endEntityDir = Paths.get("src/main/resources/end-entity");
-            
-            // Proveri da li folder postoji
+
             if (!Files.exists(endEntityDir)) {
                 System.out.println("end-entity folder ne postoji");
                 return result;
             }
-            
-            // Lista sve .der fajlove u folderu
-            Files.list(endEntityDir)
-                .filter(path -> path.toString().toLowerCase().endsWith("_ee.der"))
-                .forEach(derFile -> {
-                    try {
-                        System.out.println("Čitam End Entity sertifikat: " + derFile.getFileName());
-                        
-                        // Učitaj DER sertifikat
-                        byte[] derBytes = Files.readAllBytes(derFile);
-                        X509Certificate cert = loadCertificateFromDer(derBytes);
-                        
-                        // Generiši alias na osnovu imena fajla
-                        String fileName = derFile.getFileName().toString();
-                        String alias = fileName.replace("_ee.der", "").replace(".der", "");
-                        
-                        // Kreiraj ExtendedCAResponseDTO
-                        ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
-                        response.setMessage("End Entity sertifikat čitan iz DER fajla: " + fileName);
-                        
-                        result.add(response);
-                        System.out.println("✓ Dodao End Entity sertifikat: " + cert.getSubjectDN());
-                        
-                    } catch (Exception e) {
-                        System.err.println("Greška pri čitanju End Entity sertifikata " + derFile.getFileName() + ": " + e.getMessage());
-                    }
-                });
-                
+
+            List<Path> files = Files.list(endEntityDir)
+                    .filter(path -> path.toString().toLowerCase(Locale.ROOT).endsWith("_ee.der"))
+                    .collect(Collectors.toList());
+
+            for (Path derFile : files) {
+                try {
+                    System.out.println("Čitam End Entity sertifikat: " + derFile.getFileName());
+                    byte[] derBytes = Files.readAllBytes(derFile);
+                    X509Certificate cert = loadCertificateFromDer(derBytes);
+
+                    String fileName = derFile.getFileName().toString();
+                    String alias = fileName.replace("_ee.der", "").replace(".der", "");
+
+                    ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
+                    response.setMessage("End Entity sertifikat čitan iz DER fajla: " + fileName);
+
+                    result.add(response);
+                    System.out.println("✓ Dodao End Entity sertifikat: " + cert.getSubjectDN());
+
+                } catch (Exception e) {
+                    System.err.println("Greška pri čitanju End Entity sertifikata " + derFile.getFileName() + ": " + e.getMessage());
+                }
+            }
+
         } catch (IOException e) {
             System.err.println("Greška pri pristupanju end-entity folderu: " + e.getMessage());
             throw new Exception("Ne mogu da pristupim end-entity folderu: " + e.getMessage());
         }
-        
+
         System.out.println("Ukupno pronađeno End Entity sertifikata: " + result.size());
         return result;
     }
 
-    /**
-     * Pomoćna metoda za učitavanje sertifikata iz DER bytes
-     */
     private X509Certificate loadCertificateFromDer(byte[] derBytes) throws Exception {
         try {
             java.security.cert.CertificateFactory certFactory = java.security.cert.CertificateFactory.getInstance("X.509");
@@ -652,53 +666,41 @@ public class CertificateServiceImpl implements CertificateService {
         }
     }
 
-    /**
-     * Pomoćna metoda za proveru da li sertifikat može da potpisuje druge sertifikate (CA)
-     */
     private boolean isValidCASigner(X509Certificate cert) {
         try {
-            // 1. Proveri period važenja
             cert.checkValidity();
-            
-            // 2. Proveri BasicConstraints - mora biti CA
+
             int basicConstraints = cert.getBasicConstraints();
             boolean isCA = basicConstraints != -1;
             if (!isCA) {
                 System.out.println("  ✗ Nije CA sertifikat (BasicConstraints = -1)");
                 return false;
             }
-            
-            // 3. Proveri KeyUsage - mora imati keyCertSign
+
             boolean[] ku = cert.getKeyUsage();
             if (ku != null) {
                 boolean keyCertSign = ku.length > 5 && ku[5];
                 boolean cRLSign = ku.length > 6 && ku[6];
-                
+
                 if (!keyCertSign) {
                     System.out.println("  ✗ Nema keyCertSign u KeyUsage");
                     return false;
                 }
-                
+
                 System.out.println("  ✓ BasicConstraints CA: " + isCA + ", keyCertSign: " + keyCertSign + ", cRLSign: " + cRLSign);
             } else {
                 System.out.println("  ✗ KeyUsage nije postavljen");
                 return false;
             }
-            
-            // 4. TODO: Proveri CRL status (trenutno nije implementirano)
-            // Ovde bi trebalo dodati proveru CRL liste da vidimo da li je sertifikat povučen
-            
+
             return true;
-            
+
         } catch (Exception e) {
             System.err.println("Greška pri validaciji CA sertifikata: " + e.getMessage());
             return false;
         }
     }
-    
-    /**
-     * Pomoćna metoda za kreiranje CertificateResponse objekta
-     */
+
     private CertificateResponse createCertificateResponse(X509Certificate cert, String alias, boolean isLastInChain) throws Exception{
         CertificateResponse response = new CertificateResponse();
         response.setAlias(alias);
@@ -708,44 +710,41 @@ public class CertificateServiceImpl implements CertificateService {
         response.setNotBefore(cert.getNotBefore());
         response.setNotAfter(cert.getNotAfter());
 
-        // Dodaj opis tipa sertifikata
         if (cert.getIssuerDN().equals(cert.getSubjectDN())) {
             response.setMessage("Root CA sertifikat (self-signed)");
         } else {
             response.setMessage("Certificate - Issuer: " + cert.getIssuerDN().getName());
         }
-        
+
         return response;
     }
 
-    /**
-     * Pomocna metoda za kreiranje Intermediate CA iz ExtendedRequest
-     */
     private ExtendedCAResponseDTO createIntermediateCAFromExtendedRequest(ExtendedRequest request) throws Exception {
-        // Koristimo ID=1 kao default issuer user
         Long issuerUserId = 1L;
-        
-        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
 
-        if (userCertificates.size() == 0) {
+        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
+        if (userCertificates.isEmpty()) {
             throw new Exception("Issuer not found!");
         }
 
         String aliasToFind = request.getIssuerAlias();
         System.out.println("Tražim issuer sa alias-om: " + aliasToFind);
         System.out.println("Ukupno UserCertificate entiteta za user ID " + issuerUserId + ": " + userCertificates.size());
-        
+
         UserCertificate matchingCertificate = null;
 
         for (UserCertificate uc : userCertificates) {
-            System.out.println("Proveravam UserCertificate ID: " + uc.getId() + ", keystore: " + uc.getKeystorePath());
-            try (FileInputStream fis = new FileInputStream(uc.getKeystorePath())) {
-                KeyStore ks = KeyStore.getInstance("JKS");
-                ks.load(fis, uc.getKeystorePassword().toCharArray());
+            String path = uc.getKeystorePath();
+            if (!isKeystorePath(path)) continue;
 
-                // Lista svi alias-e
+            System.out.println("Proveravam UserCertificate ID: " + uc.getId() + ", keystore: " + path);
+            try (FileInputStream fis = new FileInputStream(path)) {
+                KeyStore ks = newKeyStoreForPath(path);
+                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, uc.getKeystorePassword());
+                ks.load(fis, ksPwd);
+
                 Enumeration<String> aliases = ks.aliases();
-                System.out.println("Aliases u keystore-u " + uc.getKeystorePath() + ":");
+                System.out.println("Aliases u keystore-u " + path + ":");
                 while (aliases.hasMoreElements()) {
                     String alias = aliases.nextElement();
                     System.out.println("  - " + alias + " (tražim: " + aliasToFind + ")");
@@ -754,13 +753,16 @@ public class CertificateServiceImpl implements CertificateService {
                 if (ks.containsAlias(aliasToFind)) {
                     matchingCertificate = uc;
                     System.out.println("✓ Pronašao matching certificate!");
+                    if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
                     break;
                 } else {
                     System.out.println("✗ Alias '" + aliasToFind + "' nije pronađen u ovom keystore-u");
                 }
 
+                if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
+
             } catch (Exception e) {
-                System.err.println("Greška pri čitanju keystore-a " + uc.getKeystorePath() + ": " + e.getMessage());
+                System.err.println("Greška pri čitanju keystore-a " + path + ": " + e.getMessage());
             }
         }
 
@@ -768,36 +770,37 @@ public class CertificateServiceImpl implements CertificateService {
             throw new Exception("Sertifikat sa aliasom '" + aliasToFind + "' nije pronađen ni u jednom keystore-u korisnika!");
         }
 
-        // Učitavanje issuer sertifikata
+        char[] matchingPwd = decryptKeystorePasswordIfNeeded(matchingCertificate.getKeystorePath(), matchingCertificate.getKeystorePassword());
+        String matchingPwdStr = matchingPwd != null ? new String(matchingPwd) : null;
+
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword(),
+                matchingPwdStr,
                 request.getIssuerAlias()
         );
 
         Issuer issuer = keyStoreReader.readIssuerFromStore(
                 matchingCertificate.getKeystorePath(),
                 request.getIssuerAlias(),
-                matchingCertificate.getKeystorePassword().toCharArray(),
-                matchingCertificate.getKeystorePassword().toCharArray()
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null,
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null
         );
 
-        // Konvertovanje LocalDate u Date
-        Date startDate = request.getStartDate() != null 
-            ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date();
-        Date endDate = request.getEndDate() != null 
-            ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000));
+        if (matchingPwd != null) java.util.Arrays.fill(matchingPwd, '\0');
+
+        Date startDate = request.getStartDate() != null
+                ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date();
+        Date endDate = request.getEndDate() != null
+                ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000));
 
         String serialNumber = (request.getSerialNumber() != null && !request.getSerialNumber().trim().isEmpty())
-            ? request.getSerialNumber()
-            : SerialNumberUtil.generateSerial(32).toString();
+                ? request.getSerialNumber()
+                : SerialNumberUtil.generateSerial(32).toString();
 
-        // Generisanje ključeva za novi CA
         KeyPair keyPair = generateKeyPair();
 
-        // Kreiranje X500Name za novi CA
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
         builder.addRDN(BCStyle.CN, request.getCommonName());
         builder.addRDN(BCStyle.O, request.getOrganization());
@@ -807,7 +810,6 @@ public class CertificateServiceImpl implements CertificateService {
 
         Subject subject = new Subject(keyPair.getPublic(), builder.build());
 
-        // Generisanje Intermediate CA sertifikata
         X509Certificate intermediateCA = caCertificateGenerator.generateIntermediateCACertificate(
                 subject,
                 issuer,
@@ -822,36 +824,29 @@ public class CertificateServiceImpl implements CertificateService {
                 request.getAdditionalExtensions()
         );
 
-        // Generisanje random lozinke za privatni ključ
-        String privateKeyPassword = PasswordGenerator.generatePassword(20);
-
         String keystorePathToUse = matchingCertificate.getKeystorePath();
-        String keyStorePassword = matchingCertificate.getKeystorePassword();
+        String keyStorePassword = matchingPwdStr;
 
         boolean issuerHasChildren = CertificateUtils.issuerHasChildren(
                 issuerCert,
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword().toCharArray()
+                matchingPwdStr != null ? matchingPwdStr.toCharArray() : null
         );
 
         if (issuerHasChildren) {
-            // Novi keystore jer dolazi do grananja
             keyStorePassword = PasswordGenerator.generatePassword(20);
-
-            String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
-            keystorePathToUse = "src/main/resources/static/" + alias + ".jks";
+            String newAlias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase(Locale.ROOT);
+            keystorePathToUse = "src/main/resources/static/" + newAlias + ".jks";
             keyStoreWriter.loadKeyStore(null, keyStorePassword.toCharArray());
-
             keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
         } else {
-            // Nastavi u isti keystore
-            keyStoreWriter.loadKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
+            keyStoreWriter.loadKeyStore(keystorePathToUse, keyStorePassword != null ? keyStorePassword.toCharArray() : null);
         }
 
-        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase();
+        String alias = request.getCommonName().replaceAll("\\s+", "-").toLowerCase(Locale.ROOT);
         List<X509Certificate> chainList = buildCertificateChain(
                 matchingCertificate.getKeystorePath(),
-                matchingCertificate.getKeystorePassword(),
+                matchingPwdStr != null ? matchingPwdStr : "",
                 request.getIssuerAlias()
         );
         chainList.add(0, intermediateCA);
@@ -860,155 +855,135 @@ public class CertificateServiceImpl implements CertificateService {
         keyStoreWriter.writeChain(alias, keyPair.getPrivate(), keyStorePassword.toCharArray(), chain);
         keyStoreWriter.saveKeyStore(keystorePathToUse, keyStorePassword.toCharArray());
 
-        // Čuvanje u bazi
         User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
+
+        SecretKey kek = kekService.getOrCreateKek(user.getId());
+        byte[] aad = ("keystore:" + aliasFromKeystorePath(keystorePathToUse)).getBytes(StandardCharsets.UTF_8);
+
+        AesGcmService.EncBlob blob = aesGcmService.encryptBytesWithKey(
+                kek,
+                keyStorePassword.getBytes(StandardCharsets.UTF_8),
+                aad
+        );
+
+        String encToken = "v1:" +
+                Base64.getEncoder().encodeToString(blob.getIv()) + ":" +
+                Base64.getEncoder().encodeToString(blob.getCt());
+
         UserCertificate userCertificate = new UserCertificate(
                 user,
                 Long.parseLong(serialNumber),
-                keyStorePassword,
+                encToken,
                 keystorePathToUse
         );
         userCertificateRepository.save(userCertificate);
 
-        // Response - kreiranje ExtendedCAResponseDTO
         ExtendedCAResponseDTO response = createExtendedCAResponseDTO(intermediateCA, alias, request, request.getIssuerAlias());
         response.setMessage("Intermediate CA uspešno kreiran i lozinka sačuvana u bazi!");
-
         return response;
     }
 
-    /**
-     * Pomoćna metoda za kreiranje ExtendedCAResponseDTO objekta
-     */
     private ExtendedCAResponseDTO createExtendedCAResponseDTO(X509Certificate cert, String alias, ExtendedRequest request, String issuerAlias) throws Exception {
         ExtendedCAResponseDTO response = new ExtendedCAResponseDTO();
-        
-        // Osnovni podaci
+
         response.setAlias(alias);
-        response.setIssuerAlias(issuerAlias); // null za Root CA, vrednost za Intermediate CA
-        
-        // Subject DN i izdvojena polja
+        response.setIssuerAlias(issuerAlias);
+
         response.setSubjectDN(cert.getSubjectDN().toString());
         response.setCommonName(request.getCommonName());
         response.setOrganization(request.getOrganization());
         response.setOrganizationalUnit(request.getOrganizationalUnit());
         response.setCountry(request.getCountry());
         response.setEmail(request.getEmail());
-        
-        // Issuer DN
+
         response.setIssuerDN(cert.getIssuerDN().toString());
-        
-        // Serial i validnost
+
         response.setSerialNumber(cert.getSerialNumber().toString());
         response.setNotBefore(cert.getNotBefore());
         response.setNotAfter(cert.getNotAfter());
-        
-        // TTL Days - izračunaj iz datuma
+
         if (request.getTtlDays() != null) {
             response.setTtlDays(request.getTtlDays());
         } else if (cert.getNotBefore() != null && cert.getNotAfter() != null) {
             long ttlMillis = cert.getNotAfter().getTime() - cert.getNotBefore().getTime();
             response.setTtlDays(ttlMillis / (24 * 60 * 60 * 1000));
         }
-        
-        // CA info
+
         response.setIsCA(request.getIsCA() != null ? request.getIsCA() : true);
         response.setPathLength(request.getPathLength());
-        
-        // SAN, key usages i ekstenzije
+
         response.setSanList(request.getSanList());
         response.setKeyUsages(request.getKeyUsages());
         response.setExtendedKeyUsages(request.getExtendedKeyUsages());
         response.setAdditionalExtensions(request.getAdditionalExtensions());
-        
-        // Certificate PEM
+
         response.setCertificatePEM(Base64.getEncoder().encodeToString(cert.getEncoded()));
-        
-        // Public key i signature info
+
         try {
             response.setPublicKeyAlgorithm(cert.getPublicKey().getAlgorithm());
             if (cert.getPublicKey().getAlgorithm().equals("RSA")) {
-                response.setPublicKeySize(cert.getPublicKey().getEncoded().length * 8); // gruba aproksimacija
+                response.setPublicKeySize(cert.getPublicKey().getEncoded().length * 8);
             }
             response.setSignatureAlgorithm(cert.getSigAlgName());
         } catch (Exception e) {
-            // Nema kritične greške ako ne možemo da dobijemo ove informacije
             System.err.println("Greška pri čitanju public key/signature informacija: " + e.getMessage());
         }
-        
+
         return response;
     }
 
-    /**
-     * Pomoćna metoda za kreiranje ExtendedCAResponseDTO objekta direktno iz X509Certificate
-     * bez potrebe za ExtendedRequest objektom (koristi se u getAll metodi)
-     */
     private ExtendedCAResponseDTO createExtendedCAResponseDTOFromCert(X509Certificate cert, String alias) throws Exception {
         ExtendedCAResponseDTO response = new ExtendedCAResponseDTO();
-        
-        // Osnovni podaci
+
         response.setAlias(alias);
-        response.setIssuerAlias(null); // Ne znamo issuer alias u getAll metodi
-        
-        // Subject DN - pokušaj da izvučeš osnovna polja iz subject DN-a
+        response.setIssuerAlias(null);
+
         response.setSubjectDN(cert.getSubjectDN().toString());
-        
-        // Razdvoj Subject DN na osnovna polja
+
         String subjectDN = cert.getSubjectDN().toString();
         response.setCommonName(extractFieldFromDN(subjectDN, "CN"));
         response.setOrganization(extractFieldFromDN(subjectDN, "O"));
         response.setOrganizationalUnit(extractFieldFromDN(subjectDN, "OU"));
         response.setCountry(extractFieldFromDN(subjectDN, "C"));
         response.setEmail(extractFieldFromDN(subjectDN, "E"));
-        
-        // Issuer DN
+
         response.setIssuerDN(cert.getIssuerDN().toString());
-        
-        // Serial i validnost
+
         response.setSerialNumber(cert.getSerialNumber().toString());
         response.setNotBefore(cert.getNotBefore());
         response.setNotAfter(cert.getNotAfter());
-        
-        // TTL Days - izračunaj iz datuma
+
         if (cert.getNotBefore() != null && cert.getNotAfter() != null) {
             long ttlMillis = cert.getNotAfter().getTime() - cert.getNotBefore().getTime();
             response.setTtlDays(ttlMillis / (24 * 60 * 60 * 1000));
         }
-        
-        // CA info - odredi na osnovu BasicConstraints
+
         int basicConstraints = cert.getBasicConstraints();
         response.setIsCA(basicConstraints != -1);
         response.setPathLength(basicConstraints >= 0 ? basicConstraints : null);
-        
-        // Certificate PEM
+
         response.setCertificatePEM(Base64.getEncoder().encodeToString(cert.getEncoded()));
-        
-        // Public key i signature info
+
         try {
             response.setPublicKeyAlgorithm(cert.getPublicKey().getAlgorithm());
             if (cert.getPublicKey().getAlgorithm().equals("RSA")) {
-                response.setPublicKeySize(cert.getPublicKey().getEncoded().length * 8); // gruba aproksimacija
+                response.setPublicKeySize(cert.getPublicKey().getEncoded().length * 8);
             }
             response.setSignatureAlgorithm(cert.getSigAlgName());
         } catch (Exception e) {
-            // Nema kritične greške ako ne možemo da dobijemo ove informacije
             System.err.println("Greška pri čitanju public key/signature informacija: " + e.getMessage());
         }
-        
-        // Dodaj opis tipa sertifikata
+
         if (cert.getIssuerDN().equals(cert.getSubjectDN())) {
             response.setMessage("Root CA sertifikat (self-signed)");
         } else {
             response.setMessage("Certificate - Issuer: " + cert.getIssuerDN().getName());
         }
-        
+
         return response;
     }
-    
-    /**
-     * Pomoćna metoda za izvlačenje određenog polja iz Distinguished Name stringa
-     */
+
     private String extractFieldFromDN(String dn, String fieldName) {
         try {
             String[] pairs = dn.split(",");
@@ -1018,22 +993,15 @@ public class CertificateServiceImpl implements CertificateService {
                     return keyValue[1].trim();
                 }
             }
-        } catch (Exception e) {
-            // Ako ne možemo da parsujemo DN, vratimo null
-        }
+        } catch (Exception e) { }
         return null;
     }
 
-    /**
-     * Kreira End Entity sertifikat na osnovu ExtendedRequest i čuva ga u DER formatu
-     */
     private ExtendedCAResponseDTO createEndEntityCertificate(ExtendedRequest request) throws Exception {
         System.out.println("=== KREIRANJE END ENTITY SERTIFIKATA ===");
-        
-        // 1. Generisanje RSA ključeva za End Entity
+
         KeyPair keyPair = generateKeyPair();
-        
-        // 2. Kreiranje X500Name za End Entity subject
+
         X500NameBuilder builder = new X500NameBuilder(BCStyle.INSTANCE);
         builder.addRDN(BCStyle.CN, request.getCommonName());
         if (request.getOrganization() != null) {
@@ -1048,82 +1016,88 @@ public class CertificateServiceImpl implements CertificateService {
         if (request.getEmail() != null) {
             builder.addRDN(BCStyle.E, request.getEmail());
         }
-        
+
         Subject subject = new Subject(keyPair.getPublic(), builder.build());
-        
-        // 3. Trebamo issuer sertifikat - za End Entity sertifikate koristimo prvi dostupni CA
+
         List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(1L);
         if (userCertificates.isEmpty()) {
             throw new Exception("Nema dostupnih CA sertifikata za potpisivanje End Entity sertifikata!");
         }
-        
-        // Pronađi valjani CA sertifikat (ne samo prvi UserCertificate)
+
         UserCertificate caCertificate = null;
         for (UserCertificate uc : userCertificates) {
             try {
                 String keystorePath = uc.getKeystorePath();
+                if (!isKeystorePath(keystorePath)) continue;
+
                 String password = uc.getKeystorePassword();
                 String alias = findAliasForCertificateId(keystorePath, password, uc.getCertificateId());
-                
+
                 if (alias != null) {
-                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, password, alias);
+                    char[] ksPwd = decryptKeystorePasswordIfNeeded(keystorePath, password);
+                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(keystorePath, ksPwd != null ? new String(ksPwd) : null, alias);
                     if (isValidCASigner(cert)) {
                         caCertificate = uc;
                         System.out.println("Pronašao valjani CA sertifikat za potpisivanje: " + alias);
+                        if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
                         break;
                     }
+                    if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
                 }
             } catch (Exception e) {
                 System.err.println("Greška pri proveri CA sertifikata: " + e.getMessage());
             }
         }
-        
+
         if (caCertificate == null) {
             throw new Exception("Nema valjanih CA sertifikata za potpisivanje End Entity sertifikata!");
         }
-        
-        // Učitaj issuer CA sertifikat - već znamo da je caCertificate valjan
-        String caAlias = findAliasForCertificateId(caCertificate.getKeystorePath(), 
-                                                  caCertificate.getKeystorePassword(), 
-                                                  caCertificate.getCertificateId());
-        
+
+        String caAlias = findAliasForCertificateId(caCertificate.getKeystorePath(),
+                caCertificate.getKeystorePassword(),
+                caCertificate.getCertificateId());
+
         if (caAlias == null) {
             throw new Exception("Ne mogu da pronađem alias za CA sertifikat!");
         }
-        
+
+        char[] caPwd = decryptKeystorePasswordIfNeeded(
+                caCertificate.getKeystorePath(),
+                caCertificate.getKeystorePassword()
+        );
+        String caPwdStr = caPwd != null ? new String(caPwd) : null;
+
         Issuer issuer = keyStoreReader.readIssuerFromStore(
                 caCertificate.getKeystorePath(),
                 caAlias,
-                caCertificate.getKeystorePassword().toCharArray(),
-                caCertificate.getKeystorePassword().toCharArray()
+                caPwdStr != null ? caPwdStr.toCharArray() : null,
+                caPwdStr != null ? caPwdStr.toCharArray() : null
         );
-        
+
         X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
                 caCertificate.getKeystorePath(),
-                caCertificate.getKeystorePassword(),
+                caPwdStr,
                 caAlias
         );
-        
+        if (caPwd != null) java.util.Arrays.fill(caPwd, '\0');
+
         if (issuer == null || issuerCert == null) {
             throw new Exception("Ne mogu da učitam CA sertifikat za potpisivanje!");
         }
-        
+
         System.out.println("Koristim CA sertifikat: " + issuerCert.getSubjectDN());
-        
-        // 4. Konvertovanje LocalDate u Date
-        Date startDate = request.getStartDate() != null 
-            ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date();
-        Date endDate = request.getEndDate() != null 
-            ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
-            : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000)); // +1 godina default
-        
-        // 5. Generisanje serial number
+
+        Date startDate = request.getStartDate() != null
+                ? Date.from(request.getStartDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date();
+        Date endDate = request.getEndDate() != null
+                ? Date.from(request.getEndDate().atStartOfDay(ZoneId.systemDefault()).toInstant())
+                : new Date(System.currentTimeMillis() + (365L * 24 * 60 * 60 * 1000));
+
         String serialNumber = (request.getSerialNumber() != null && !request.getSerialNumber().trim().isEmpty())
-            ? request.getSerialNumber()
-            : SerialNumberUtil.generateSerial(32).toString();
-        
-        // 6. Generisanje End Entity sertifikata
+                ? request.getSerialNumber()
+                : SerialNumberUtil.generateSerial(32).toString();
+
         X509Certificate endEntityCert = caCertificateGenerator.generateEndEntityCertificate(
                 subject,
                 issuer,
@@ -1132,23 +1106,21 @@ public class CertificateServiceImpl implements CertificateService {
                 endDate,
                 serialNumber
         );
-        
-        // 7. Čuvanje sertifikata u DER formatu
+
         String cn = request.getCommonName();
         if (cn == null || cn.trim().isEmpty()) {
             cn = "end-entity";
         }
         String safeFile = cn.replaceAll("[^a-zA-Z0-9._-]", "_");
-        
+
         Path outDir = Paths.get("src/main/resources/end-entity");
         Files.createDirectories(outDir);
-        
+
         Path certPath = outDir.resolve(safeFile + "_ee.der");
         writeCertificateDer(endEntityCert, certPath);
-        
+
         System.out.println("End Entity sertifikat sačuvan u: " + certPath);
 
-        //kreiranje user-certificate reda u tabeli
         User user = userRepository.findById(1L)
                 .orElseThrow(() -> new RuntimeException("User sa ID=1 nije pronađen u bazi"));
 
@@ -1159,21 +1131,15 @@ public class CertificateServiceImpl implements CertificateService {
                 certPath.toString()
         );
         userCertificateRepository.save(userCertificate);
-        
-        // 8. Kreiranje response DTO-ja
+
         ExtendedCAResponseDTO response = createExtendedCAResponseDTO(endEntityCert, safeFile, request, null);
         response.setMessage("End Entity sertifikat uspešno kreiran i sačuvan u DER formatu: " + certPath);
-        
+
         return response;
     }
-    
-    /**
-     * Pomoćna metoda za čuvanje sertifikata u DER formatu
-     */
+
     private void writeCertificateDer(X509Certificate cert, Path path) throws IOException, CertificateEncodingException {
-        byte[] der = cert.getEncoded(); // ASN.1 DER binary
+        byte[] der = cert.getEncoded();
         Files.write(path, der, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
-
 }
-

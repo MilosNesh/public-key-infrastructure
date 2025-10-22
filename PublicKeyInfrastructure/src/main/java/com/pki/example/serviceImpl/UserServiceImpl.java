@@ -13,6 +13,7 @@ import com.pki.example.util.TokenUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -89,5 +90,17 @@ public class UserServiceImpl implements UserService {
         }catch (Exception e) {
             return false;
         }
+    }
+
+    @Override
+    public List<String> getEmails(String email) {
+        List<User> users = userRepository.findAll();
+        List<String> emails = new ArrayList<>();
+        for(User user : users){
+            Role role = user.getRoles().get(0);
+            if(!user.getEmail().equals(email) && role.getName().equals("ROLE_USER"))
+                emails.add(user.getEmail());
+        }
+        return emails;
     }
 }
