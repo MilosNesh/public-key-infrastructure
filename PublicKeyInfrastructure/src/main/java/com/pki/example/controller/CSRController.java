@@ -1,10 +1,13 @@
 package com.pki.example.controller;
 
 import com.pki.example.data.CertificateResponse;
+import com.pki.example.data.User;
 import com.pki.example.dto.CsrResponseDTO;
 import com.pki.example.dto.CsrUploadResponse;
 import com.pki.example.service.CSRService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -21,6 +24,7 @@ public class CSRController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('USER')")
     public ResponseEntity<?> uploadCSR(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "issuerAlias", required = false) String issuerAlias,
@@ -37,18 +41,28 @@ public class CSRController {
     }
 
     @PostMapping("/{csrId}/approve")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<CertificateResponse> approveCSR(
             @PathVariable Long csrId,
-            @RequestParam("issuerUserId") Long issuerUserId,
             @RequestParam("issuerAlias") String issuerAlias)  throws Exception {
-        CertificateResponse response = csrService.approveCSR(csrId, 1L);
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        CertificateResponse response = csrService.approveCSR(csrId, user.getId());
         return ResponseEntity.ok(response);
     }
 
     @GetMapping("/user")
+    @PreAuthorize("hasRole('USER')")
     public ResponseEntity<List<CsrResponseDTO>> getCsrsByUserId() throws Exception {
-        List<CsrResponseDTO> csrList = csrService.getCsrsByUserId(1L);
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<CsrResponseDTO> csrList = csrService.getCsrsByUserId(user.getId());
         return ResponseEntity.ok(csrList);
     }
 
+    @GetMapping("/all")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
+    public ResponseEntity<List<CsrResponseDTO>> getAllCsrs() throws Exception {
+        List<CsrResponseDTO> csrList = csrService.getAllCsrs();
+        return ResponseEntity.ok(csrList);
     }
+
+}
