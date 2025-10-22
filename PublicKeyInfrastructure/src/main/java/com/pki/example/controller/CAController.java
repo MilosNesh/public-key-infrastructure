@@ -10,6 +10,7 @@ import com.pki.example.service.CertificateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,6 +23,7 @@ public class CAController {
     private final CertificateService certificateService;
 
     @PostMapping("/root")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<ExtendedCAResponseDTO> createRootCA(
             @RequestBody ExtendedRequest request) throws Exception {
         // Koristi NOVI servis (čuva lozinke u bazi)
@@ -30,6 +32,7 @@ public class CAController {
     }
 
     @PostMapping("/intermediate/{issuerUserId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<ExtendedCAResponseDTO> createIntermediateCA(
             @PathVariable Long issuerUserId,
             @RequestBody ExtendedRequest request) throws Exception {
@@ -40,18 +43,21 @@ public class CAController {
     }
 
     @GetMapping("/all")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAll() throws Exception {
         List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll();
         return ResponseEntity.ok(allCertificates);
     }
 
     @GetMapping("/valid-ca-aliases")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'CAUSER')")
     public ResponseEntity<List<CAWithValidityDTO>> getAllValidCAAliases() throws Exception {
         List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases();
         return ResponseEntity.ok(validCAAliases);
     }
 
     @GetMapping("/end-entity")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'CAUSER')")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAllEndEntity() throws Exception {
         List<ExtendedCAResponseDTO> endEntityCertificates = certificateService.getAllEndEntity();
         return ResponseEntity.ok(endEntityCertificates);
