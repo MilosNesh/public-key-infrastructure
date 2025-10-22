@@ -58,4 +58,11 @@ public class CSRController {
         return ResponseEntity.ok(csrList);
     }
 
+    @GetMapping("/all")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
+    public ResponseEntity<List<CsrResponseDTO>> getAllCsrs() throws Exception {
+        List<CsrResponseDTO> csrList = csrService.getAllCsrs();
+        return ResponseEntity.ok(csrList);
+    }
+
 }

@@ -3,6 +3,7 @@ package com.pki.example.serviceImpl;
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.*;
 import com.pki.example.domain.UserCertificate;
+import com.pki.example.data.User;
 import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
@@ -660,6 +661,49 @@ public class CertificateServiceImpl implements CertificateService {
         }
 
         System.out.println("Ukupno pronađeno End Entity sertifikata: " + result.size());
+        return result;
+    }
+
+    @Override
+    public List<ExtendedCAResponseDTO> getUserEndEntity(User user) throws Exception {
+        List<ExtendedCAResponseDTO> result = new ArrayList<>();
+
+        System.out.println("Tražim End Entity sertifikate za korisnika: " + user.getEmail());
+
+        // Čitamo user_certificates tabelu za određenog korisnika
+        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(user.getId());
+        System.out.println("Ukupno UserCertificate entiteta za korisnika " + user.getEmail() + ": " + userCertificates.size());
+
+        for (UserCertificate userCert : userCertificates) {
+            String path = userCert.getKeystorePath();
+            String pwdToken = userCert.getKeystorePassword();
+
+            // Proveravamo da li je keystore-password null (što označava end-entity sertifikat)
+            if (pwdToken == null) {
+                try {
+                    // Proveravamo da li je putanja DER fajl iz end-entity foldera
+                    if (isDerPath(path) && path.contains("end-entity")) {
+                        System.out.println("Pronašao End Entity sertifikat za korisnika: " + path);
+                        
+                        byte[] der = Files.readAllBytes(Paths.get(path));
+                        X509Certificate cert = loadCertificateFromDer(der);
+                        
+                        String fileName = Paths.get(path).getFileName().toString();
+                        String alias = fileName.replaceFirst("\\.(der|cer|crt)$", "");
+                        
+                        ExtendedCAResponseDTO response = createExtendedCAResponseDTOFromCert(cert, alias);
+                        response.setMessage("End Entity sertifikat korisnika: " + fileName);
+                        
+                        result.add(response);
+                        System.out.println("✓ Dodao End Entity sertifikat korisnika: " + cert.getSubjectDN());
+                    }
+                } catch (Exception e) {
+                    System.err.println("Greška pri čitanju End Entity sertifikata korisnika: " + path + " - " + e.getMessage());
+                }
+            }
+        }
+
+        System.out.println("Ukupno pronađeno End Entity sertifikata za korisnika " + user.getEmail() + ": " + result.size());
         return result;
     }
 

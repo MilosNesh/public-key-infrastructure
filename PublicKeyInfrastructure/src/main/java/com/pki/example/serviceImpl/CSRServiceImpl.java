@@ -3,6 +3,7 @@ package com.pki.example.serviceImpl;
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.CertificateResponse;
 import com.pki.example.data.Issuer;
+import com.pki.example.data.User;
 import com.pki.example.domain.CsrRequest;
 import com.pki.example.domain.UserCertificate;
 import com.pki.example.dto.CsrResponseDTO;
@@ -67,6 +68,9 @@ public class CSRServiceImpl implements CSRService {
 
     @Autowired
     private UserCertificateRepository userCertificateRepository;
+
+    @Autowired
+    private com.pki.example.repository.UserRepository userRepository;
 
     @Autowired
     private CertificateServiceImpl certificateService;
@@ -169,6 +173,18 @@ public class CSRServiceImpl implements CSRService {
         request.setCertificatePath(certPath.toString());
         request.setStatus("APPROVED");
         csrRepository.save(request);
+
+        // 5. Upisuj end entity sertifikat u user_certificates tabelu
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new RuntimeException("User sa ID=" + request.getUserId() + " nije pronađen u bazi"));
+
+        UserCertificate userCertificate = new UserCertificate(
+                user,
+                Long.parseLong(serial32.toString()),
+                null, // keystore_password je null za end entity sertifikate
+                certPath.toString()
+        );
+        userCertificateRepository.save(userCertificate);
 
         CertificateResponse response = new CertificateResponse();
         response.setMessage("End entity uspesno kreiran");
@@ -322,6 +338,49 @@ public class CSRServiceImpl implements CSRService {
         
         // Pronađi sve CSR zahteve za datog korisnika
         List<CsrRequest> csrRequests = csrRepository.findByUserId(userId);
+        
+        for (CsrRequest csrRequest : csrRequests) {
+            try {
+                // Učitaj CSR fajl sa diska
+                Path csrPath = Paths.get(csrRequest.getCsrPath());
+                
+                if (!Files.exists(csrPath)) {
+                    System.err.println("CSR fajl ne postoji: " + csrPath);
+                    continue;
+                }
+                
+                byte[] csrBytes = Files.readAllBytes(csrPath);
+                
+                // Konvertuj u PEM format (ako već nije)
+                String csrPem = convertToPem(csrBytes);
+                
+                // Kreiraj DTO
+                CsrResponseDTO dto = new CsrResponseDTO();
+                dto.setId(csrRequest.getId());
+                dto.setUserId(csrRequest.getUserId());
+                dto.setCsrPem(csrPem);
+                dto.setStatus(csrRequest.getStatus());
+                dto.setIssuerAlias(csrRequest.getIssuerAlias());
+                dto.setStartDate(csrRequest.getStartDate());
+                dto.setEndDate(csrRequest.getEndDate());
+                dto.setCertificatePath(csrRequest.getCertificatePath());
+                
+                result.add(dto);
+                
+            } catch (Exception e) {
+                System.err.println("Greška pri učitavanju CSR-a ID " + csrRequest.getId() + ": " + e.getMessage());
+            }
+        }
+        
+        return result;
+    }
+
+    @Override
+    public List<CsrResponseDTO> getAllCsrs() throws Exception {
+        List<CsrResponseDTO> result = new ArrayList<>();
+        
+        // Pronađi sve CSR zahteve (bez filtriranja po userId)
+        List<CsrRequest> csrRequests = csrRepository.findAll();
         
         for (CsrRequest csrRequest : csrRequests) {
             try {

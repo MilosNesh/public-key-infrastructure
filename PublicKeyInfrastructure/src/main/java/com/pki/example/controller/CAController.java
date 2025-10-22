@@ -11,7 +11,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+
+import com.pki.example.data.User;
 
 import java.util.List;
 
@@ -43,7 +46,7 @@ public class CAController {
     }
 
     @GetMapping("/all")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAll() throws Exception {
         List<ExtendedCAResponseDTO> allCertificates = certificateService.getAll();
         return ResponseEntity.ok(allCertificates);
@@ -61,5 +64,13 @@ public class CAController {
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAllEndEntity() throws Exception {
         List<ExtendedCAResponseDTO> endEntityCertificates = certificateService.getAllEndEntity();
         return ResponseEntity.ok(endEntityCertificates);
+    }
+
+    @GetMapping("/user/end-entity")
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN', 'CAUSER')")
+    public ResponseEntity<List<ExtendedCAResponseDTO>> getUserEndEntity() throws Exception {
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<ExtendedCAResponseDTO> userEndEntityCertificates = certificateService.getUserEndEntity(user);
+        return ResponseEntity.ok(userEndEntityCertificates);
     }
 }

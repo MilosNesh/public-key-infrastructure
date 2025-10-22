@@ -6,6 +6,7 @@ import com.pki.example.data.ExtendedRequest;
 import com.pki.example.data.IntermediateCARequest;
 import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
+import com.pki.example.data.User;
 
 import java.util.List;
 
@@ -43,5 +44,13 @@ public interface CertificateService {
      * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju End Entity sertifikate
      */
     List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception;
+
+    /**
+     * Vraća sve End Entity sertifikate za određenog korisnika
+     * Čita user_certificates tabelu i za svaki red gde je keystore-password null vraća end entity sertifikat iz end-entity foldera
+     * @param user Korisnik za koga se traže end entity sertifikati
+     * @return Lista ExtendedCAResponseDTO objekata koji predstavljaju End Entity sertifikate za određenog korisnika
+     */
+    List<ExtendedCAResponseDTO> getUserEndEntity(User user) throws Exception;
 }
 
