@@ -37,6 +37,9 @@ public class User implements UserDetails {
     @Column(name = "organization")
     private String organization;
 
+    @Column(name = "mustChangePassword")
+    private boolean mustChangePassword;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "user_role",
             joinColumns = @JoinColumn(name = "user_id", referencedColumnName = "id"),
@@ -54,6 +57,7 @@ public class User implements UserDetails {
         this.surname = surname;
         this.password = password;
         this.organization = organization;
+        this.mustChangePassword = false;
     }
     public User(UserDTO userDTO) {
         this.email = userDTO.getEmail();
@@ -61,6 +65,7 @@ public class User implements UserDetails {
         this.surname = userDTO.getSurname();
         this.password = userDTO.getPassword();
         this.organization = userDTO.getOrganization();
+        this.mustChangePassword = false;
     }
 
     public boolean isValid() {
@@ -100,7 +105,11 @@ public class User implements UserDetails {
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return roles.stream()
-                .map(role -> new SimpleGrantedAuthority(role.getName()))  // role.getName() mora biti npr. "ROLE_USER"
+                .map(role -> new SimpleGrantedAuthority(role.getName()))
                 .collect(Collectors.toList());
+    }
+
+    public boolean getMustChangePassword() {
+        return mustChangePassword;
     }
 }

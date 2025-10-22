@@ -86,6 +86,7 @@ public class UserServiceImpl implements UserService {
             User user = userRepository.findByEmail(recoveryDataDTO.getEmail());
             if(tokenUtils.validateToken(token, user)){
                 user.setPassword(PasswordHasher.hashPassword(recoveryDataDTO.getPassword()));
+                user.setMustChangePassword(false);
                 userRepository.save(user);
                 return true;
             }
@@ -115,6 +116,7 @@ public class UserServiceImpl implements UserService {
             return null;
         if(!PasswordGenerator.isPasswordStrongEnough(user.getPassword()))
             return null;
+        user.setMustChangePassword(true);
         List<Role> roles = roleService.findByName("ROLE_CAUSER");
         user.setRoles(roles);
         user.setPassword(PasswordHasher.hashPassword(user.getPassword()));
