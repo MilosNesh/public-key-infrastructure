@@ -5,6 +5,7 @@ import com.pki.example.data.User;
 import com.pki.example.dto.LoginDetailsDTO;
 import com.pki.example.dto.RecoveryDataDTO;
 import com.pki.example.repository.UserRepository;
+import com.pki.example.security.PasswordGenerator;
 import com.pki.example.security.PasswordHasher;
 import com.pki.example.service.MailService;
 import com.pki.example.service.RoleService;
@@ -30,6 +31,8 @@ public class UserServiceImpl implements UserService {
     @Override
     public User register(User user) {
         if(!user.isValid())
+            return null;
+        if(!PasswordGenerator.isPasswordStrongEnough(user.getPassword()))
             return null;
         List<Role> roles = roleService.findByName("ROLE_USER");
         user.setRoles(roles);
@@ -102,5 +105,22 @@ public class UserServiceImpl implements UserService {
                 emails.add(user.getEmail());
         }
         return emails;
+    }
+
+    @Override
+    public User saveCAUser(User user) {
+        String password = PasswordGenerator.generatePassword(12);
+        user.setPassword(password);
+        if(!user.isValid())
+            return null;
+        if(!PasswordGenerator.isPasswordStrongEnough(user.getPassword()))
+            return null;
+        List<Role> roles = roleService.findByName("ROLE_CAUSER");
+        user.setRoles(roles);
+        user.setPassword(PasswordHasher.hashPassword(user.getPassword()));
+        User savedUser = userRepository.save(user);
+        if(savedUser != null)
+            savedUser.setPassword(password);
+        return savedUser;
     }
 }

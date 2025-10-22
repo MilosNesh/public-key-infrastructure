@@ -132,7 +132,7 @@ public class AuthController {
     public ResponseEntity<String> recover(@RequestBody RecoveryDataDTO recoveryDataDTO, HttpServletRequest request) {
         boolean isReset = userService.resetPassword(recoveryDataDTO, tokenUtils.getToken(request));
         if(!isReset)
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("You do not have permission to reset password.");
         return ResponseEntity.ok("");
     }
 
