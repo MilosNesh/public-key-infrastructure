@@ -13,7 +13,6 @@ import java.util.Set;
 @AllArgsConstructor
 public class CertificateTemplateRequestDTO {
     private String name;
-    private String label;
     private String issuerAlias;
     private String commonNameRegex;
     private String sanRegex;

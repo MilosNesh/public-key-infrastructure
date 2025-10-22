@@ -18,7 +18,6 @@ public class CertificateTemplateResponseDTO {
     private Long id;
     private Long userId;
     private String name;
-    private String label;
     private String issuerAlias;
     private String commonNameRegex;
     private String sanRegex;

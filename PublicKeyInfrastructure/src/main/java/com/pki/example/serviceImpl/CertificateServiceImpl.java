@@ -3,6 +3,7 @@ package com.pki.example.serviceImpl;
 import com.pki.example.certificates.CACertificateGenerator;
 import com.pki.example.data.*;
 import com.pki.example.domain.UserCertificate;
+import com.pki.example.dto.CAWithValidityDTO;
 import com.pki.example.dto.ExtendedCAResponseDTO;
 import com.pki.example.keystores.KeyStoreReader;
 import com.pki.example.keystores.KeyStoreWriter;
@@ -561,53 +562,58 @@ public class CertificateServiceImpl implements CertificateService {
         System.out.println("Ukupno pronađeno sertifikata: " + result.size());
         return result;
     }
-//
-//    @Override
-//    public List<String> getAllValidCAAliases() throws Exception {
-//        List<String> validCAAliases = new ArrayList<>();
-//
-//        System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
-//        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
-//        System.out.println("Ukupno UserCertificate entiteta za proveru CA: " + userCertificates.size());
-//
-//        for (UserCertificate userCert : userCertificates) {
-//            try {
-//                String path = userCert.getKeystorePath();
-//                String password = userCert.getKeystorePassword();
-//
-//                if (!isKeystorePath(path)) continue;
-//
-//                String alias = findAliasForCertificateId(path, password, userCert.getCertificateId());
-//                if (alias == null) continue;
-//
-//                System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + path);
-//
-//                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, password);
-//                try {
-//                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(
-//                            path,
-//                            ksPwd != null ? new String(ksPwd) : null,
-//                            alias
-//                    );
-//                    if (isValidCASigner(cert)) {
-//                        validCAAliases.add(alias);
-//                        System.out.println("✓ Dodao validni CA alias: " + alias);
-//                    } else {
-//                        System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
-//                    }
-//                } finally {
-//                    if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
-//                }
-//
-//            } catch (Exception e) {
-//                System.err.println("Greška pri proveri CA alias-a za UserCertificate ID: " + userCert.getId() +
-//                        ", greška: " + e.getMessage());
-//            }
-//        }
-//
-//        System.out.println("Ukupno pronađeno validnih CA alias-a: " + validCAAliases.size());
-//        return validCAAliases;
-//    }
+    @Override
+    public List<CAWithValidityDTO> getAllValidCAAliases() throws Exception {
+        List<CAWithValidityDTO> validCAAliases = new ArrayList<>();
+
+        System.out.println("Tražim sve validne CA alias-e koji mogu da potpisuju sertifikate...");
+        List<UserCertificate> userCertificates = userCertificateRepository.findAll();
+        System.out.println("Ukupno UserCertificate entiteta za proveru CA: " + userCertificates.size());
+
+        for (UserCertificate userCert : userCertificates) {
+            try {
+                String path = userCert.getKeystorePath();
+                String password = userCert.getKeystorePassword();
+
+                if (!isKeystorePath(path)) continue;
+
+                String alias = findAliasForCertificateId(path, password, userCert.getCertificateId());
+                if (alias == null) continue;
+
+                System.out.println("Proveravam CA validnost za alias: " + alias + " u keystore: " + path);
+
+                char[] ksPwd = decryptKeystorePasswordIfNeeded(path, password);
+                try {
+                    X509Certificate cert = (X509Certificate) keyStoreReader.readCertificate(
+                            path,
+                            ksPwd != null ? new String(ksPwd) : null,
+                            alias
+                    );
+                    if (isValidCASigner(cert)) {
+                        CAWithValidityDTO caDto = new CAWithValidityDTO(
+                                alias,
+                                cert.getNotBefore(),
+                                cert.getNotAfter()
+                        );
+                        validCAAliases.add(caDto);
+                        System.out.println("✓ Dodao validni CA alias: " + alias + " sa datumima: " + 
+                                cert.getNotBefore() + " - " + cert.getNotAfter());
+                    } else {
+                        System.out.println("✗ Alias nije validan CA za potpisivanje: " + alias);
+                    }
+                } finally {
+                    if (ksPwd != null) java.util.Arrays.fill(ksPwd, '\0');
+                }
+
+            } catch (Exception e) {
+                System.err.println("Greška pri proveri CA alias-a za UserCertificate ID: " + userCert.getId() +
+                        ", greška: " + e.getMessage());
+            }
+        }
+
+        System.out.println("Ukupno pronađeno validnih CA alias-a: " + validCAAliases.size());
+        return validCAAliases;
+    }
 
     @Override
     public List<ExtendedCAResponseDTO> getAllEndEntity() throws Exception {

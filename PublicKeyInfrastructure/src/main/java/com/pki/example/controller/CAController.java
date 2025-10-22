@@ -45,11 +45,11 @@ public class CAController {
         return ResponseEntity.ok(allCertificates);
     }
 
-//    @GetMapping("/valid-ca-aliases")
-//    public ResponseEntity<List<CAWithValidityDTO>> getAllValidCAAliases() throws Exception {
-//        List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases();
-//        return ResponseEntity.ok(validCAAliases);
-//    }
+    @GetMapping("/valid-ca-aliases")
+    public ResponseEntity<List<CAWithValidityDTO>> getAllValidCAAliases() throws Exception {
+        List<CAWithValidityDTO> validCAAliases = certificateService.getAllValidCAAliases();
+        return ResponseEntity.ok(validCAAliases);
+    }
 
     @GetMapping("/end-entity")
     public ResponseEntity<List<ExtendedCAResponseDTO>> getAllEndEntity() throws Exception {

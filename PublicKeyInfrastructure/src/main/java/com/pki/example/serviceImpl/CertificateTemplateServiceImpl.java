@@ -32,10 +32,6 @@ public class CertificateTemplateServiceImpl implements CertificateTemplateServic
         if (requestDTO.getName() == null || requestDTO.getName().trim().isEmpty()) {
             throw new IllegalArgumentException("Naziv template-a ne može biti prazan.");
         }
-        
-        if (requestDTO.getLabel() == null || requestDTO.getLabel().trim().isEmpty()) {
-            throw new IllegalArgumentException("Label template-a ne može biti prazan.");
-        }
 
         if (requestDTO.getIssuerAlias() == null || requestDTO.getIssuerAlias().trim().isEmpty()) {
             throw new IllegalArgumentException("Issuer alias ne može biti prazan.");
