@@ -2,8 +2,11 @@ package com.pki.example.util;
 
 import java.io.FileInputStream;
 import java.security.KeyStore;
+import java.security.PublicKey;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Enumeration;
 import java.util.List;
 
@@ -43,6 +46,35 @@ public class CertificateUtils {
 
         } catch (Exception e) {
             throw new RuntimeException("Greška pri proveri child sertifikata: " + e.getMessage(), e);
+        }
+    }
+
+
+    public static String getPublicKeyPEM(String certificatePath) throws Exception {
+        // 1. Učitaj sertifikat iz DER fajla
+        CertificateFactory factory = CertificateFactory.getInstance("X.509");
+        try (FileInputStream fis = new FileInputStream(certificatePath)) {
+            X509Certificate cert = (X509Certificate) factory.generateCertificate(fis);
+
+            // 2. Izvuci javni ključ
+            PublicKey publicKey = cert.getPublicKey();
+
+            // 3. Pretvori javni ključ u Base64
+            String base64Key = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+
+            // 4. Formatiraj kao PEM
+            StringBuilder pemBuilder = new StringBuilder();
+            pemBuilder.append("-----BEGIN PUBLIC KEY-----\n");
+
+            // dodaj po 64 karaktera po liniji (standardno)
+            for (int i = 0; i < base64Key.length(); i += 64) {
+                int end = Math.min(i + 64, base64Key.length());
+                pemBuilder.append(base64Key, i, end).append("\n");
+            }
+
+            pemBuilder.append("-----END PUBLIC KEY-----\n");
+
+            return pemBuilder.toString();
         }
     }
 }

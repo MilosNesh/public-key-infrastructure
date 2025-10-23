@@ -30,7 +30,8 @@ public class CSRController {
             @RequestParam(value = "issuerAlias", required = false) String issuerAlias,
             @RequestParam(value = "startDate", required = false) String startDate,
             @RequestParam(value = "endDate", required = false) String endDate) throws Exception {
-        Long savedId = csrService.saveCSR(file, 1L, issuerAlias, startDate, endDate);
+        User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        Long savedId = csrService.saveCSR(file, user.getId(), issuerAlias, startDate, endDate);
         CsrUploadResponse body = new CsrUploadResponse(
                 "OK",
                 savedId,
