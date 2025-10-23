@@ -1,5 +1,6 @@
 package com.pki.example.config;
 
+import com.pki.example.data.SessionStore;
 import com.pki.example.security.RestAuthenticationEntryPoint;
 import com.pki.example.security.TokenAuthenticationFilter;
 import com.pki.example.serviceImpl.CustomUserDetailsServiceImpl;
@@ -14,6 +15,7 @@ import org.springframework.security.config.annotation.authentication.builders.Au
 import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -30,6 +32,8 @@ import java.util.List;
 public class SecurityConfig {
     @Autowired
     private TokenUtils tokenUtils;
+    @Autowired
+    private SessionStore sessionStore;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -37,6 +41,7 @@ public class SecurityConfig {
                 .cors().configurationSource(corsConfigurationSource())
                 .and()
                 .csrf().disable()
+                .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
                 .authorizeRequests()
                 .antMatchers("/auth/register").permitAll()
                 .antMatchers("/auth/activate").permitAll()
@@ -44,13 +49,15 @@ public class SecurityConfig {
                 .antMatchers("/auth/recover").permitAll()
                 .antMatchers("/auth/recoverylink").permitAll()
                 //privremeno resenje
-                .antMatchers("/api/ca/**").permitAll()
-                .antMatchers("/api/csr/**").permitAll()
-                .antMatchers("/api/templates/**").permitAll()
+//                .antMatchers("/api/ca/**").permitAll()
+//                .antMatchers("/api/csr/**").permitAll()
+//                .antMatchers("/api/templates/**").permitAll()
                 .anyRequest().authenticated()
+                .and().exceptionHandling().authenticationEntryPoint(restAuthenticationEntryPoint)
                 .and()
                 .formLogin().loginPage("/login").permitAll().and()
-                .addFilterBefore(new TokenAuthenticationFilter(tokenUtils,  userDetailsService()), BasicAuthenticationFilter.class);
+                .addFilterBefore(new TokenAuthenticationFilter(tokenUtils, userDetailsService(), sessionStore),
+                        BasicAuthenticationFilter.class);
 
 
         return http.build();

@@ -13,4 +13,6 @@ public interface CSRService {
 
     List<CsrResponseDTO> getCsrsByUserId(Long userId) throws Exception;
 
+    List<CsrResponseDTO> getAllCsrs() throws Exception;
+
 }

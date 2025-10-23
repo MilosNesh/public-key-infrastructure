@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import javax.servlet.http.HttpServletRequest;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class TokenUtils {
@@ -25,11 +26,13 @@ public class TokenUtils {
 
     private SignatureAlgorithm SIGNATURE_ALGORITHM = SignatureAlgorithm.HS512;
 
-    public String generateToken(User user) {
+    public String generateToken(User user, String sid) {
         return Jwts.builder()
                 .setIssuer(APP_NAME)
                 .setSubject(user.getEmail())
                 .claim("role", user.getRoles().get(0).getName())
+                .claim("sid", sid) // NEW
+                .setId(UUID.randomUUID().toString())
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(new Date().getTime() + EXPIRES_IN))
                 .signWith(SIGNATURE_ALGORITHM, SECRET).compact();
@@ -109,6 +112,17 @@ public class TokenUtils {
 
     public int getExpiredIn() {
         return EXPIRES_IN;
+    }
+
+    public String getSidFromToken(String token) {
+        try {
+            final Claims claims = this.getAllClaimsFromToken(token);
+            return claims.get("sid", String.class);
+        } catch (ExpiredJwtException ex) {
+            throw ex;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
 }

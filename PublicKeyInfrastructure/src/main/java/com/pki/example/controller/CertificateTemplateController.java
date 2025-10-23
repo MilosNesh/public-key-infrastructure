@@ -7,6 +7,7 @@ import com.pki.example.service.CertificateTemplateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,10 +19,9 @@ public class CertificateTemplateController {
 
     private final CertificateTemplateService templateService;
 
-    /**
-     * POST /api/templates - Kreira novi Certificate Template
-     */
+
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<CertificateTemplateResponseDTO> createTemplate(
             @RequestBody CertificateTemplateRequestDTO requestDTO) {
         try {
@@ -35,10 +35,8 @@ public class CertificateTemplateController {
         }
     }
 
-    /**
-     * GET /api/templates/{id} - Vraća template po ID-ju
-     */
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<CertificateTemplateResponseDTO> getTemplateById(@PathVariable Long id) {
         try {
             CertificateTemplateResponseDTO response = templateService.getTemplateById(id);
@@ -51,39 +49,32 @@ public class CertificateTemplateController {
         }
     }
 
-    /**
-     * GET /api/templates - Vraća sve template-e
-     */
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<CertificateTemplateResponseDTO>> getAllTemplates() {
         List<CertificateTemplateResponseDTO> templates = templateService.getAllTemplates();
         return ResponseEntity.ok(templates);
     }
 
-    /**
-     * GET /api/templates/active - Vraća sve aktivne template-e
-     */
+
     @GetMapping("/active")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<CertificateTemplateResponseDTO>> getActiveTemplates() {
         List<CertificateTemplateResponseDTO> templates = templateService.getActiveTemplates();
         return ResponseEntity.ok(templates);
     }
 
-    /**
-     * GET /api/templates/issuer/{issuerAlias} - Vraća template-e po issuer alias-u
-     */
+
     @GetMapping("/issuer/{issuerAlias}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<CertificateTemplateResponseDTO>> getTemplatesByIssuer(
             @PathVariable String issuerAlias) {
         List<CertificateTemplateResponseDTO> templates = templateService.getTemplatesByIssuer(issuerAlias);
         return ResponseEntity.ok(templates);
     }
 
-    /**
-     * GET /api/templates/user/{userId}/dropdown - Vraća template-e za dropdown (samo id i label)
-     * Vraća aktivne template-e koje pripadaju korisniku
-     */
     @GetMapping("/dropdown")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAUSER')")
     public ResponseEntity<List<TemplateDropdownDTO>> getTemplatesForUserDropdown() {
         List<TemplateDropdownDTO> templates = templateService.getTemplatesForUserDropdown(1L);
         return ResponseEntity.ok(templates);
