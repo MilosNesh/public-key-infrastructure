@@ -103,6 +103,35 @@ public class KeyStoreReader {
         return null;
     }
 
+    public X509Certificate[] readChain(String keystorePath, char[] keystorePassword, String alias) {
+        try (FileInputStream fis = new FileInputStream(keystorePath)) {
+            KeyStore ks = KeyStore.getInstance("JKS");
+            ks.load(fis, keystorePassword);
+
+            // Uzimamo ceo lanac sertifikata za dati alias
+            java.security.cert.Certificate[] chain = ks.getCertificateChain(alias);
+            if (chain == null) {
+                throw new RuntimeException("Sertifikat ili lanac nisu pronađeni za alias: " + alias);
+            }
+
+            // Pretvaramo u X509Certificate[]
+            X509Certificate[] x509Chain = new X509Certificate[chain.length];
+            for (int i = 0; i < chain.length; i++) {
+                if (chain[i] instanceof X509Certificate) {
+                    x509Chain[i] = (X509Certificate) chain[i];
+                } else {
+                    throw new RuntimeException("Lanac sadrži ne-X509 sertifikat!");
+                }
+            }
+
+            return x509Chain;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Greška pri čitanju lanca sertifikata: " + e.getMessage(), e);
+        }
+    }
+
+
     /**
      * Ucitava privatni kljuc is KS fajla
      */

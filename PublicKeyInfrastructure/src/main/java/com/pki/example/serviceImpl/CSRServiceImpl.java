@@ -1,0 +1,457 @@
+package com.pki.example.serviceImpl;
+
+import com.pki.example.certificates.CACertificateGenerator;
+import com.pki.example.data.CertificateResponse;
+import com.pki.example.data.Issuer;
+import com.pki.example.data.User;
+import com.pki.example.domain.CsrRequest;
+import com.pki.example.domain.UserCertificate;
+import com.pki.example.dto.CsrResponseDTO;
+import com.pki.example.keystores.KeyStoreReader;
+import com.pki.example.keystores.KeyStoreWriter;
+import com.pki.example.repository.CsrRepository;
+import com.pki.example.repository.UserCertificateRepository;
+import com.pki.example.service.CSRService;
+import com.pki.example.util.SerialNumberUtil;
+import org.bouncycastle.asn1.ASN1String;
+import org.bouncycastle.asn1.x500.RDN;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
+import org.bouncycastle.operator.ContentVerifierProvider;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.StringReader;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.security.KeyStore;
+import java.security.PublicKey;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.X509Certificate;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Date;
+import java.util.List;
+
+
+@Service
+public class CSRServiceImpl implements CSRService {
+
+
+    @Autowired
+    private CACertificateGenerator caCertificateGenerator;
+
+    @Autowired
+    private KeyStoreWriter keyStoreWriter;
+
+    @Autowired
+    private KeyStoreReader keyStoreReader;
+
+    @Autowired
+    private CsrRepository csrRepository;
+
+    @Autowired
+    private UserCertificateRepository userCertificateRepository;
+
+    @Autowired
+    private com.pki.example.repository.UserRepository userRepository;
+
+    @Autowired
+    private CertificateServiceImpl certificateService;
+
+    @Override
+    public CertificateResponse approveCSR(Long csrId, Long issuerUserId) throws Exception{
+        System.out.println("CSR id: " + csrId);
+        CsrRequest request = csrRepository.findById(csrId)
+                .orElseThrow(() -> new IllegalArgumentException("CSR not found"));
+
+        if (!request.getStatus().equals("pending")) {
+            throw new IllegalStateException("CSR already processed");
+        }
+
+        // 1. Učitaj CSR fajl
+        Path csrPath = Paths.get(request.getCsrPath());
+        PKCS10CertificationRequest csr = loadCSR(Files.readAllBytes(csrPath));
+
+        String issuerAlias = request.getIssuerAlias();
+        // 2) Pripremi issuer (CA) i issuer cert iz keystorea
+        List<UserCertificate> userCertificates = userCertificateRepository.findByUserId(issuerUserId);
+
+        if (userCertificates.size() == 0) {
+            throw new Exception("Issuer not found!");
+        }
+
+        UserCertificate matchingCertificate = null;
+
+        for (UserCertificate uc : userCertificates) {
+            try (FileInputStream fis = new FileInputStream(uc.getKeystorePath())) {
+                KeyStore ks = KeyStore.getInstance("JKS");
+                
+                // Dekriptuj lozinku pre korišćenja
+                char[] decryptedPassword = certificateService.decryptKeystorePasswordIfNeeded(
+                        uc.getKeystorePath(), uc.getKeystorePassword(), issuerUserId);
+                ks.load(fis, decryptedPassword);
+
+                if (ks.containsAlias(issuerAlias)) {
+                    matchingCertificate = uc;
+                    break; // našli smo sertifikat, možemo da prekinemo
+                }
+
+            } catch (Exception e) {
+                System.err.println("Greška pri čitanju keystore-a " + uc.getKeystorePath() + ": " + e.getMessage());
+            }
+        }
+
+        if (matchingCertificate == null) {
+            throw new Exception("Nije pronađen odgovarajući CA sertifikat sa alias-om: " + issuerAlias);
+        }
+
+        char[] ksPwd = certificateService.decryptKeystorePasswordIfNeeded(
+                matchingCertificate.getKeystorePath(),
+                matchingCertificate.getKeystorePassword(),
+                issuerUserId);
+
+        X509Certificate issuerCert = (X509Certificate) keyStoreReader.readCertificate(
+                matchingCertificate.getKeystorePath(),
+                ksPwd != null ? new String(ksPwd) : null,
+                issuerAlias
+        );
+
+        Issuer issuer = keyStoreReader.readIssuerFromStore(
+                matchingCertificate.getKeystorePath(),
+                issuerAlias,
+                ksPwd != null ? ksPwd : null,
+                ksPwd != null ? ksPwd : null
+        );
+
+        // 3) Koristi datume iz CSR request-a ako postoje, inače koristi default vrednosti
+        Date startDate = request.getStartDate();
+        Date endDate = request.getEndDate();
+        
+        if (startDate == null) {
+            startDate = new Date();
+        }
+        if (endDate == null) {
+            endDate = Date.from(Instant.now().plus(365, ChronoUnit.DAYS));
+        }
+
+        // 4) Serijski broj (160-bit random, pozitivan)
+        BigInteger serial32 = SerialNumberUtil.generateSerial(32);
+
+        // 2. Generiši sertifikat na osnovu CSR-a
+        X509Certificate certificate = caCertificateGenerator.generateEndEntityCertificateFromCsr(
+                csr, issuer, issuerCert, startDate, endDate, serial32.toString()
+        );
+
+        // 3. Sačuvaj sertifikat na disk
+        String cn = extractCN(csr.getSubject());
+        if (cn == null || cn.isBlank()) cn = "end-entity";
+        String safeFile = cn.replaceAll("[^a-zA-Z0-9._-]", "_");
+
+        Path outDir = Paths.get("src/main/resources/end-entity");
+        Files.createDirectories(outDir);
+
+        Path certPath = outDir.resolve(safeFile + "_ee.der");
+        writeCertificateDer(certificate, certPath);
+
+        // 4. Ažuriraj bazu
+        request.setCertificatePath(certPath.toString());
+        request.setStatus("APPROVED");
+        csrRepository.save(request);
+
+        // 5. Upisuj end entity sertifikat u user_certificates tabelu
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new RuntimeException("User sa ID=" + request.getUserId() + " nije pronađen u bazi"));
+
+        UserCertificate userCertificate = new UserCertificate(
+                user,
+                Long.parseLong(serial32.toString()),
+                null, // keystore_password je null za end entity sertifikate
+                certPath.toString()
+        );
+        userCertificateRepository.save(userCertificate);
+
+        CertificateResponse response = new CertificateResponse();
+        response.setMessage("End entity uspesno kreiran");
+
+        return response;
+    }
+
+    private static String extractCN(X500Name subject) {
+        RDN[] rdns = subject.getRDNs(BCStyle.CN);
+        if (rdns != null && rdns.length > 0 && rdns[0].getFirst() != null) {
+            return ((ASN1String) rdns[0].getFirst().getValue()).getString();
+        }
+        return null;
+    }
+
+    private static void writeCertificateDer(X509Certificate cert, Path path)
+            throws IOException, CertificateEncodingException {
+        byte[] der = cert.getEncoded(); // ASN.1 DER binary
+        Files.write(path, der, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private PKCS10CertificationRequest loadCSR(byte[] raw) throws IOException {
+        // Ako je PEM (počinje sa -----BEGIN CERTIFICATE REQUEST-----)
+        String s = new String(raw, StandardCharsets.UTF_8).trim();
+        if (s.startsWith("-----BEGIN")) {
+            try (PEMParser pem = new PEMParser(new StringReader(s))) {
+                Object obj = pem.readObject();
+                if (obj instanceof PKCS10CertificationRequest) {
+                    return (PKCS10CertificationRequest) obj;
+                }
+                // Neki alati vrate drugačiji wrapper — probaj ručno da izdvojiš Base64
+                String base64 = s
+                        .replace("-----BEGIN CERTIFICATE REQUEST-----", "")
+                        .replace("-----END CERTIFICATE REQUEST-----", "")
+                        .replaceAll("\\s+", "");
+                byte[] der = Base64.getDecoder().decode(base64);
+                return new PKCS10CertificationRequest(der);
+            }
+        }
+
+        // Inače tretiraj kao DER
+        return new PKCS10CertificationRequest(raw);
+    }
+
+
+    @Override
+    public Long saveCSR(MultipartFile file, Long userId, String issuerAlias, String startDateStr, String endDateStr) throws Exception {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Prazan fajl.");
+        }
+        // 1) Učitaj bajtove sa upload-a
+        byte[] raw = file.getBytes();
+
+        // 2) Parsiraj CSR (radi i za PEM i za DER)
+        PKCS10CertificationRequest csr = loadCSR(raw);
+
+        // 3) Proveri potpis CSR-a (da nije korumpiran / nevalidan)
+        if (!isCsrSignatureValid(csr)) {
+            throw new IllegalArgumentException("CSR potpis nije validan.");
+        }
+
+        // 4) Odredi naziv fajla (koristi CN ako postoji, inače originalno ime)
+        String cn = extractCN(csr.getSubject());
+        String baseName = (cn != null && !cn.isBlank())
+                ? cn
+                : (file.getOriginalFilename() != null ? file.getOriginalFilename() : "request");
+        String safe = sanitize(baseName);
+
+        // 5) Folder i ekstenzija (čuvamo originalni sadržaj; ekstenzija .csr je uobičajena)
+        Path dir = Paths.get("src/main/resources/csr");
+        Files.createDirectories(dir);
+        String ext = guessCsrExtension(file, raw); // .pem ili .csr
+
+        String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        Path out = dir.resolve(safe + "_" + ts + ext);
+
+        // 6) Upis na disk
+        Files.write(out, raw, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+        // 7) Parsiraj datume iz stringova (očekuje se ISO format kao "2024-10-21T00:00:00.000Z")
+        Date startDate = null;
+        Date endDate = null;
+        if (startDateStr != null && !startDateStr.isEmpty()) {
+            startDate = parseISODate(startDateStr);
+        }
+        if (endDateStr != null && !endDateStr.isEmpty()) {
+            endDate = parseISODate(endDateStr);
+        }
+
+        // 8) Zapiši u bazu
+        CsrRequest entity = new CsrRequest();
+        entity.setUserId(userId);
+        entity.setCsrPath(out.toString());
+        entity.setStatus("pending"); // dogovoreno stanje
+        entity.setIssuerAlias(issuerAlias);
+        entity.setStartDate(startDate);
+        entity.setEndDate(endDate);
+
+        CsrRequest saved = csrRepository.save(entity);
+        return saved.getId();
+    }
+    
+    /**
+     * Parsira ISO 8601 datum string u Date objekat.
+     * Podržava formate: "2024-10-21T00:00:00.000Z" ili "2024-10-21T00:00:00"
+     */
+    private Date parseISODate(String dateStr) throws Exception {
+        try {
+            // Probaj sa ISO formatom koji uključuje milisekunde i timezone
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+            sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            return sdf.parse(dateStr);
+        } catch (Exception e1) {
+            try {
+                // Probaj sa jednostavnijim formatom bez timezone
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+                return sdf.parse(dateStr);
+            } catch (Exception e2) {
+                throw new IllegalArgumentException("Neispravan format datuma: " + dateStr + 
+                    ". Očekivan format: yyyy-MM-dd'T'HH:mm:ss.SSS'Z' ili yyyy-MM-dd'T'HH:mm:ss");
+            }
+        }
+    }
+
+    /** Provera potpisa CSR-a javnim ključem iz samog CSR-a. */
+    private boolean isCsrSignatureValid(PKCS10CertificationRequest csr) throws Exception {
+        PublicKey pubKey = new JcaPEMKeyConverter().getPublicKey(csr.getSubjectPublicKeyInfo());
+        ContentVerifierProvider verifier = new JcaContentVerifierProviderBuilder()
+                .setProvider("BC")
+                .build(pubKey);
+        return csr.isSignatureValid(verifier);
+    }
+
+    private String guessCsrExtension(MultipartFile file, byte[] raw) {
+        String name = file.getOriginalFilename();
+        if (name != null && name.toLowerCase().endsWith(".pem")) return ".pem";
+        if (name != null && name.toLowerCase().endsWith(".csr")) return ".csr";
+        String s = new String(raw, StandardCharsets.UTF_8).trim();
+        if (s.startsWith("-----BEGIN")) return ".pem";
+        return ".csr";
+    }
+
+    /** Sanitizacija naziva fajla. */
+    private String sanitize(String input) {
+        return input.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    @Override
+    public List<CsrResponseDTO> getCsrsByUserId(Long userId) throws Exception {
+        List<CsrResponseDTO> result = new ArrayList<>();
+        
+        // Pronađi sve CSR zahteve za datog korisnika
+        List<CsrRequest> csrRequests = csrRepository.findByUserId(userId);
+        
+        for (CsrRequest csrRequest : csrRequests) {
+            try {
+                // Učitaj CSR fajl sa diska
+                Path csrPath = Paths.get(csrRequest.getCsrPath());
+                
+                if (!Files.exists(csrPath)) {
+                    System.err.println("CSR fajl ne postoji: " + csrPath);
+                    continue;
+                }
+                
+                byte[] csrBytes = Files.readAllBytes(csrPath);
+                
+                // Konvertuj u PEM format (ako već nije)
+                String csrPem = convertToPem(csrBytes);
+                
+                // Kreiraj DTO
+                CsrResponseDTO dto = new CsrResponseDTO();
+                dto.setId(csrRequest.getId());
+                dto.setUserId(csrRequest.getUserId());
+                dto.setCsrPem(csrPem);
+                dto.setStatus(csrRequest.getStatus());
+                dto.setIssuerAlias(csrRequest.getIssuerAlias());
+                dto.setStartDate(csrRequest.getStartDate());
+                dto.setEndDate(csrRequest.getEndDate());
+                dto.setCertificatePath(csrRequest.getCertificatePath());
+                
+                result.add(dto);
+                
+            } catch (Exception e) {
+                System.err.println("Greška pri učitavanju CSR-a ID " + csrRequest.getId() + ": " + e.getMessage());
+            }
+        }
+        
+        return result;
+    }
+
+    @Override
+    public List<CsrResponseDTO> getAllCsrs() throws Exception {
+        List<CsrResponseDTO> result = new ArrayList<>();
+        
+        // Pronađi sve CSR zahteve (bez filtriranja po userId)
+        List<CsrRequest> csrRequests = csrRepository.findAll();
+        
+        for (CsrRequest csrRequest : csrRequests) {
+            try {
+                // Učitaj CSR fajl sa diska
+                Path csrPath = Paths.get(csrRequest.getCsrPath());
+                
+                if (!Files.exists(csrPath)) {
+                    System.err.println("CSR fajl ne postoji: " + csrPath);
+                    continue;
+                }
+                
+                byte[] csrBytes = Files.readAllBytes(csrPath);
+                
+                // Konvertuj u PEM format (ako već nije)
+                String csrPem = convertToPem(csrBytes);
+                
+                // Kreiraj DTO
+                CsrResponseDTO dto = new CsrResponseDTO();
+                dto.setId(csrRequest.getId());
+                dto.setUserId(csrRequest.getUserId());
+                dto.setCsrPem(csrPem);
+                dto.setStatus(csrRequest.getStatus());
+                dto.setIssuerAlias(csrRequest.getIssuerAlias());
+                dto.setStartDate(csrRequest.getStartDate());
+                dto.setEndDate(csrRequest.getEndDate());
+                dto.setCertificatePath(csrRequest.getCertificatePath());
+                
+                result.add(dto);
+                
+            } catch (Exception e) {
+                System.err.println("Greška pri učitavanju CSR-a ID " + csrRequest.getId() + ": " + e.getMessage());
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Konvertuje CSR bajtove u PEM format string.
+     * Ako je već PEM, vrati kao string. Ako je DER, konvertuj u PEM.
+     */
+    private String convertToPem(byte[] csrBytes) throws Exception {
+        String s = new String(csrBytes, StandardCharsets.UTF_8).trim();
+        
+        // Ako već jeste PEM format, vrati ga
+        if (s.startsWith("-----BEGIN CERTIFICATE REQUEST-----")) {
+            return s;
+        }
+        
+        // Inače je DER format - konvertuj u PEM
+        PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrBytes);
+        
+        // Konvertuj u Base64 i formatiraj kao PEM
+        byte[] encoded = csr.getEncoded();
+        String base64 = Base64.getEncoder().encodeToString(encoded);
+        
+        // Razbij u linije po 64 karaktera (PEM standard)
+        StringBuilder pem = new StringBuilder();
+        pem.append("-----BEGIN CERTIFICATE REQUEST-----\n");
+        
+        int index = 0;
+        while (index < base64.length()) {
+            int endIndex = Math.min(index + 64, base64.length());
+            pem.append(base64, index, endIndex).append("\n");
+            index = endIndex;
+        }
+        
+        pem.append("-----END CERTIFICATE REQUEST-----");
+        
+        return pem.toString();
+    }
+
+}
